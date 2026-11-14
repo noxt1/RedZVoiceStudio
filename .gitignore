@@ -85,6 +85,9 @@ dist/
 release/
 *.zip
 
+# Сторонний софт и установщики (не распространять)
+installers/
+
 # macOS
 .DS_Store
 *.DS_Store
