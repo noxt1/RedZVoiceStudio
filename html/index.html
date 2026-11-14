@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>RedZ Soundboard</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+        #sb-root { position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px; }
+        audio { display: none; }
+    </style>
+</head>
+<body>
+    <div id="sb-root"></div>
+    <script>
+        // Кэш аудио-элементов, чтобы не пересоздавать <audio> на каждое нажатие.
+        const cache = new Map();
+
+        function getAudio(resourceName, sound) {
+            const key = resourceName + '/sounds/' + sound;
+            if (cache.has(key)) return cache.get(key);
+
+            const audio = new Audio('nui://' + key + '.ogg');
+            audio.preload = 'auto';
+            cache.set(key, audio);
+            return audio;
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data || {};
+
+            if (data.action === 'play') {
+                const audio = getAudio(data.resourceName, data.sound);
+                audio.volume = Math.min(1, Math.max(0, data.volume ?? 0.8));
+                audio.currentTime = 0;
+                const p = audio.play();
+                if (p && p.catch) p.catch(() => {});
+            }
+
+            if (data.action === 'stop') {
+                cache.forEach((audio) => {
+                    try { audio.pause(); audio.currentTime = 0; } catch (e) {}
+                });
+            }
+        });
+    </script>
+</body>
+</html>

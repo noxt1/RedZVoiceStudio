@@ -1,0 +1,157 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Виртуальные окружения Python
+.venv/
+venv/
+ENV/
+env/
+.venv_voice/
+
+# Окружение XTTS (4+ ГБ, ставится через tools/setup_env.ps1)
+.venv_voice/
+
+# Образец голоса (личная запись пользователя)
+reference.wav
+reference_test.wav
+
+# Записи сканера голоса (пользовательские аудиоданные)
+voice_samples/
+
+# Модель верификации голоса (скачивается автоматически)
+.ecapa/
+
+# Промежуточные аудиофайлы
+tmp_*.wav
+*.tmp
+
+# Логи приложения
+*.log
+logs/
+
+# Локальные workspace и пользовательские данные
+workspace/
+workspace/**/*
+*.sqlite
+*.db
+
+# Crash dumps и диагностика с личными данными
+error_*.txt
+diag_*.txt
+crash_*
+
+# Секреты и учётные данные
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.pfx
+*.secrets
+secrets/
+.credentials/
+
+# PyInstaller артефакты
+*.spec.build/
+*.manifest
+*.exe
+*.dll
+*.pyd
+
+# Каталоги сборки и релизов (готовые EXE и ONEDIR)
+build/
+dist/
+release/
+*.zip
+
+# macOS
+.DS_Store
+*.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints
+
+# Исполняемые файлы и бинарные сборки
+*.exe
+*.msi
+*.dmg
+*.pkg
+
+# Модели и веса нейросетей (крупные бинарные файлы)
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.engine
+*.pb
+*.bin
+*.h5
+*.npz
+*.npz
+
+# Кэши Hugging Face, PyTorch и других загрузчиков моделей
+.cache/
+.huggingface/
+torchserve/
+*.lock
+
+# Аудиозаписи пользователей и транскрипции
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.aac
+*.wma
+*.m4a
+
+# Исключаем предварительно собранные звуковые файлы (генерируются XTTS)
+sounds/
+out/
+
+# Локальная документация протокола (рабочие черновики)
+_archive/
+
+# Forschung/бенчмарки с личными заменами
+research/*_final*
+research/*_copy*
+research/*_backup*

@@ -1,0 +1,363 @@
+"""Клиент живого перевода: общается с движком (tools/live_translate.py).
+
+Схема работы:
+  1. GUI запускает движок отдельным процессом (в нём torch и модели).
+  2. Модели грузятся один раз и живут в памяти (~15 с при старте).
+  3. При нажатии кнопки «Говорить»:
+       запись с микрофона -> PCM -> движок -> распознавание, перевод, синтез
+     -> чанки аудио приходят обратно и играются в выбранное устройство.
+  4. Пока идёт синтез, можно говорить снова (очередь).
+
+Модели в EXE не влезают (4 ГБ), поэтому GUI только заказывает, а движок считает.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import queue
+import subprocess
+import sys
+import threading
+import time
+
+import numpy as np
+
+SR_ASR = 16000
+SR_TTS = 24000
+
+
+class LiveTranslator:
+    """Управление процессом движка и воспроизведение ответа."""
+
+    def __init__(self, engine_python: str | None, script: str,
+                 reference: str, on_event=None, on_text=None) -> None:
+        self.engine_python = engine_python
+        self.script = script
+        self.reference = reference
+        self.on_event = on_event or (lambda kind, data: None)
+        self.on_text = on_text or (lambda ru, es, tone="": None)
+
+        self.proc: subprocess.Popen | None = None
+        self.ready = False
+        self.loading = False
+        self.busy = False
+        self.seq = 0
+        self.error = ""
+        self._lines: queue.Queue[str] = queue.Queue()
+        self._reader: threading.Thread | None = None
+        # RLock, а не Lock: _send() берёт его изнутри translate_pcm()
+        self._lock = threading.RLock()
+
+    # ---------- запуск ----------
+    def start(self) -> bool:
+        """Запустить движок и загрузить модели."""
+        with self._lock:
+            if self.proc is not None:
+                return True
+            self._diag_log(f"[gui] start(): python={self.engine_python} "
+                           f"script={self.script}")
+            if not self.engine_python or not os.path.exists(self.engine_python):
+                self.error = "нет движка (engine не установлен)"
+                self._diag_log(f"[gui] ОШИБКА: {self.error}")
+                return False
+            if not os.path.exists(self.script):
+                self.error = f"нет скрипта движка: {self.script}"
+                self._diag_log(f"[gui] ОШИБКА: {self.error}")
+                return False
+
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            env["COQUI_TOS_AGREED"] = "1"
+            env["PYTHONUNBUFFERED"] = "1"
+            # PyInstaller (onefile) прокидывает в окружение потомка свои
+            # переменные (_MEIPASS, _PYI_*) и подставляет _MEIPASS в PATH.
+            # Дочерний python из-за этого грузит не свои DLL и падает —
+            # вычищаем всё это.
+            for key in list(env):
+                if key.startswith("_PYI") or key == "_MEIPASS":
+                    env.pop(key, None)
+            path = env.get("PATH", "")
+            if "_MEI" in path:
+                keep = [p for p in path.split(os.pathsep) if "_MEI" not in p]
+                env["PATH"] = os.pathsep.join(keep)
+            self._diag_log(f"[gui] окружение: PATH={env.get('PATH', '')[:300]}")
+            try:
+                self.proc = subprocess.Popen(
+                    [self.engine_python, self.script,
+                     f"--reference={self.reference}"],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                    errors="replace", bufsize=1, env=env,
+                    cwd=os.path.dirname(self.script))
+            except Exception as exc:  # noqa: BLE001
+                self.error = f"не удалось запустить движок: {exc}"
+                self.proc = None
+                return False
+
+            # Движок работает В ФОНЕ игры: понижаем приоритет, чтобы
+            # Windows отдавала ресурсы игре, а перевод ждал своей очереди.
+            # Иначе при 100% GPU игра начинает подтормаживать.
+            try:
+                import ctypes
+                BELOW_NORMAL = 0x00004000
+                handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)
+                if handle:
+                    ctypes.windll.kernel32.SetPriorityClass(handle, BELOW_NORMAL)
+                    ctypes.windll.kernel32.CloseHandle(handle)
+            except Exception:
+                pass
+            self._reader = threading.Thread(target=self._read_loop, daemon=True)
+            self._reader.start()
+            threading.Thread(target=self._read_err, daemon=True).start()
+            self._diag_log(f"[gui] запуск: {self.engine_python} {self.script}")
+            self._send({"cmd": "load"})
+            self.loading = True
+            return True
+
+    def _diag_log(self, text: str) -> None:
+        """Записать в лог отладочную строку (что запускаем и что пришло)."""
+        try:
+            logs = os.path.join(os.path.dirname(self.reference), "logs")
+            os.makedirs(logs, exist_ok=True)
+            with open(os.path.join(logs, "live_engine.log"), "a",
+                      encoding="utf-8") as fh:
+                fh.write(text + "\n")
+                fh.flush()
+        except Exception:
+            pass
+
+    def _read_loop(self) -> None:
+        assert self.proc and self.proc.stdout
+        for line in self.proc.stdout:
+            text = line.rstrip()
+            # чанки аудио большие — в лог не пишем, но очередь получают целиком
+            if not text.startswith('{"event":"chunk"'):
+                self._diag_log(f"[engine>] {text[:300]}")
+            self._lines.put(text)
+        self._diag_log("[engine] поток вывода закрыт")
+        self._lines.put("")  # признак конца потока
+
+    def _read_err(self) -> None:
+        assert self.proc and self.proc.stderr
+        # stderr движка пишем в ОТДЕЛЬНЫЙ файл: сам движок уже ведёт
+        # свой лог (live_engine.log), иначе строки дублируются
+        log_path = None
+        try:
+            logs = os.path.join(os.path.dirname(self.reference), "logs")
+            os.makedirs(logs, exist_ok=True)
+            log_path = os.path.join(logs, "live_engine_stderr.log")
+        except Exception:
+            log_path = None
+        fh = open(log_path, "a", encoding="utf-8") if log_path else None
+        try:
+            for line in self.proc.stderr:
+                text = line.rstrip()
+                if fh:
+                    fh.write(text + "\n")
+                    fh.flush()
+                self.on_event("log", text)
+        except Exception:
+            pass
+        finally:
+            if fh:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+
+    def _send(self, msg: dict) -> None:
+        if not self.proc or not self.proc.stdin:
+            return
+        try:
+            with self._lock:
+                self.proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                self.proc.stdin.flush()
+        except Exception:
+            pass
+
+    # ---------- приём ответов ----------
+    def poll(self) -> None:
+        """Разобрать пришедшие строки. Вызывается из GUI-потока."""
+        while True:
+            try:
+                line = self._lines.get_nowait()
+            except queue.Empty:
+                return
+            if not line:
+                self.error = "движок остановился"
+                self.ready = False
+                self.loading = False
+                self.on_event("state", {"error": self.error})
+                continue
+            try:
+                msg = json.loads(line)
+            except Exception:
+                continue
+            kind = msg.get("event")
+            if kind == "ready":
+                self.ready = True
+                self.loading = False
+                self.error = ""
+                self.on_event("state", {"ready": True})
+            elif kind == "text":
+                self.on_text(msg.get("ru", ""), msg.get("es", ""),
+                             msg.get("tone", ""))
+            elif kind == "chunk":
+                self.on_event("chunk", msg)
+            elif kind == "done":
+                self.busy = False
+                self.on_event("done", msg)
+            elif kind == "peer_text":
+                # чужой игрок: оригинал + перевод на русский
+                self.on_event("peer_text", msg)
+            elif kind == "incoming_chunk":
+                # чанк входящего перевода (для наушников)
+                self.on_event("incoming_chunk", msg)
+            elif kind == "incoming_done":
+                # завершение синтеза входящего перевода
+                self.on_event("incoming_done", msg)
+            elif kind == "lang":
+                self.on_event("lang", msg)
+            elif kind == "error":
+                self.error = msg.get("message", "")
+                self.busy = False
+                self.loading = False
+                self.on_event("state", {"error": self.error})
+
+    # ---------- язык перевода ----------
+    def set_lang(self, code: str) -> bool:
+        """Переключить язык перевода (es / en / ow / it)."""
+        if not self.ready:
+            return False
+        try:
+            self._send({"cmd": "lang", "code": str(code)})
+            return True
+        except Exception:
+            return False
+
+    def set_peer_lang(self, code: str) -> bool:
+        """Язык чужой речи: auto или конкретный (es/en/it/ru)."""
+        if not self.ready:
+            return False
+        try:
+            self._send({"cmd": "peer_lang", "code": str(code)})
+            return True
+        except Exception:
+            return False
+
+    def send_peer_pcm(self, pcm: np.ndarray, sr: int = 16000) -> bool:
+        """Отдать фрагмент звука игры на разбор речи игроков."""
+        if not self.ready:
+            return False
+        try:
+            data = (np.clip(pcm, -1.0, 1.0) * 32767).astype(np.int16)
+            self._send({"cmd": "peer", "sr": int(sr),
+                        "pcm": base64.b64encode(data.tobytes()).decode("ascii")})
+            return True
+        except Exception:
+            return False
+
+    def incoming_speak(self, text: str, seq: int = 0,
+                       voice_profile: str | None = None) -> bool:
+        """Запросить синтез русского текста для входящего перевода.
+
+        Движок синтезирует текст через XTTS (язык 'ru') и отдаёт чанки
+        через incoming_chunk события. GUI направляет их в наушники.
+        """
+        if not self.ready:
+            return False
+        try:
+            self._send({"cmd": "incoming_speak", "text": str(text),
+                        "seq": int(seq),
+                        "voice_profile": str(voice_profile)
+                        if voice_profile is not None else None})
+            return True
+        except Exception:
+            return False
+
+    # ---------- перевод ----------
+    def set_liveliness(self, level: int) -> bool:
+        """Задать уровень «живости» синтеза (0 — ровно, 3 — максимум).
+
+        Движок сдвигает параметры XTTS: чем выше, тем свободнее сэмплирование
+        и разнообразнее интонация.
+        """
+        if not self.ready:
+            return False
+        try:
+            self._send({"cmd": "liveliness", "level": int(level)})
+            return True
+        except Exception:
+            return False
+
+    def translate_pcm(self, pcm: np.ndarray, sr: int = 44100,
+                      floor: float = 0.0) -> bool:
+        """Отдать записанное аудио на перевод.
+
+        Аудио шлём «как есть» (int16, с частотой sr) — ресемплинг до 16 кГц
+        делает движок: в EXE нет scipy, а в движке он есть.
+
+        floor — уровень шума комнаты: движок отбросит фрагменты тише него
+        (иначе Whisper на шуме галлюцинирует и это озвучивается).
+        """
+        if not self.ready:
+            return False
+        with self._lock:
+            self.seq += 1
+            seq = self.seq
+            data = (np.clip(pcm, -1.0, 1.0) * 32767).astype(np.int16)
+            self.busy = True
+            self._send({"cmd": "translate", "seq": seq, "sr": int(sr),
+                        "floor": round(float(floor), 6),
+                        "pcm": base64.b64encode(data.tobytes()).decode("ascii")})
+        return True
+
+    def stop(self) -> None:
+        """Остановить движок."""
+        proc = self.proc
+        self.proc = None
+        self.ready = False
+        self.loading = False
+        if proc:
+            try:
+                self._send({"cmd": "quit"})
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+
+def pcm_to_float16(pcm_bytes: bytes) -> np.ndarray:
+    """bytes int16 -> float32 mono."""
+    return np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def float16_to_pcm_bytes(audio: np.ndarray) -> bytes:
+    """float32 -> bytes int16."""
+    return (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+
+
+def resample_to_16k(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Перевести в 16 кГц для Whisper.
+
+    В GUI scipy нет (исключён из сборки EXE), поэтому используем
+    линейную интерполяцию numpy. Точность здесь не критична: дальше
+    движок всё равно приводит аудио к 16 кГц через scipy.
+    """
+    if sr == SR_ASR or audio.size == 0:
+        return audio
+    n_out = int(round(len(audio) * SR_ASR / sr))
+    if n_out < 1:
+        return audio
+    x_in = np.arange(len(audio), dtype=np.float64)
+    x_out = np.linspace(0, len(audio) - 1, n_out)
+    return np.interp(x_out, x_in, audio).astype(np.float32)

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>RedZ Soundboard — локальный плеер</title>
+<style>
+    :root { color-scheme: dark; }
+    body {
+        margin: 0;
+        padding: 18px 20px;
+        background: #14161a;
+        color: #e8e8e8;
+        font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    }
+    h1 { font-size: 17px; margin: 0 0 4px; }
+    .sub { color: #8b93a1; font-size: 12px; margin-bottom: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 7px; }
+    button {
+        display: flex; align-items: baseline; gap: 8px;
+        width: 100%; padding: 8px 10px;
+        background: #1e2229; color: #e8e8e8;
+        border: 1px solid #2c313a; border-radius: 6px;
+        font: inherit; text-align: left; cursor: pointer;
+    }
+    button:hover { background: #262c35; border-color: #3a414d; }
+    button:active { background: #313844; }
+    .k {
+        display: inline-block; min-width: 26px; padding: 1px 6px;
+        background: #3a414d; border-radius: 4px;
+        font: 600 11px/1.6 ui-monospace, Consolas, monospace; color: #fff;
+        text-align: center;
+    }
+    .t { flex: 1; }
+    .ru { color: #79818f; font-size: 11.5px; }
+    .vol { margin: 14px 0 4px; display: flex; align-items: center; gap: 10px; }
+    .vol input { flex: 1; }
+    .hint { color: #6d7684; font-size: 11.5px; margin-top: 12px; }
+    .cat { color: #6d7684; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin: 14px 0 6px; }
+</style>
+</head>
+<body>
+<h1>RedZ Soundboard</h1>
+<div class="sub">Мексиканский акцент · мат без упоминаний родственников (п.3.2) · 31 реплика</div>
+
+<div class="vol">
+    <span>Громкость</span>
+    <input type="range" id="vol" min="0" max="100" value="80">
+    <span id="volv">80%</span>
+</div>
+
+<div id="list"></div>
+
+<div class="hint">
+    Клавиши 1–9, 0, Numpad 1–9, F1–F12 работают без нажатия на кнопки.<br>
+    Чтобы другие игроки слышали реплики, направь вывод в микрофон (VoiceMeeter / VB-CABLE) —
+    тогда звук пойдёт в голосовой канал RedM.
+</div>
+
+<script>
+const LINES = [
+    ["01","1","Que chido, guay!","Как круто, гей!","excl"],
+    ["02","2","No manches, guay!","Не фигня, гей!","excl"],
+    ["03","3","Orale, carnal!","Орале, брат!","excl"],
+    ["04","4","A huevo!","В яйца!","excl"],
+    ["05","5","Neta que no manches!","Точно, не фигня!","excl"],
+    ["06","6","Que pedo, guay!","Чё за фигня, гей!","excl"],
+    ["07","7","Pinche cabron!","Пинче каброн!","excl"],
+    ["08","8","Ya esta chido, aqui voy!","Уже круто, я иду!","excl"],
+    ["09","9","Chilango de mi corazon!","Чиланго моего сердца!","excl"],
+    ["10","0","Ya ni me hable, por favor!","Уже не говори со мной, пожалуйста!","excl"],
+    ["11","numpad1","Arriba!","Подъём! / Вверх!","action"],
+    ["12","numpad2","¡Abajo!","Вниз!","action"],
+    ["13","numpad3","No se mueva!","Не двигайся!","action"],
+    ["14","numpad4","Manos arriba!","Руки вверх!","action"],
+    ["15","numpad5","Alto! Alla se!","Стой! Сюда!","action"],
+    ["16","numpad6","Suelte el arma!","Брось оружие!","action"],
+    ["17","numpad7","¡Dispara primero!","Сначала стреляй!","action"],
+    ["18","numpad8","Me rindo!","Сдаюсь!","action"],
+    ["19","numpad9","¡Auxilio!","Помогите!","action"],
+    ["20","f1","Que me van a matar!","Меня убьют!","rp"],
+    ["21","f2","No me puedo mover!","Я не могу пошевелиться!","rp"],
+    ["22","f3","Tengo un balazo en la pierna!","У меня пуля в ноге!","rp"],
+    ["23","f4","Socorro por favor!","Помогите, пожалуйста!","rp"],
+    ["24","f5","Acepto mi destino!","Принимаю свою судьбу!","rp"],
+    ["25","f6","No acepto, punto!","Не принимаю, точка!","rp"],
+    ["26","f7","Aqui esta tu dinero, no te lopinees","Вот твои деньги, не ной","flav"],
+    ["27","f8","Me late, no?","Мне нравится, нет?","flav"],
+    ["28","f9","Eso no se hace aqui","Так тут не делают","flav"],
+    ["29","f10","Vete pal otro, te toca","Иди к другому, твоя очередь","flav"],
+    ["30","f11","Ya me dio hambre","Уже хочу есть","flav"],
+    ["31","f12","Cafe con leche, por favor","Кофе с молоком, пожалуйста","flav"],
+    ["32","pause","eres un maldito maricón","ты ебаный пидарас","custom"],
+    ["33","scroll_lock","hola mi dulce pan","привет моя сладкая булочка","custom"],
+];
+
+const CAT_NAMES = { excl: "Эмоции и мат", action: "Действия", rp: "Ролевая речь", flav: "Фразы-подвороты" };
+const cache = new Map();
+let volume = 0.8;
+
+function audioFor(id) {
+    if (!cache.has(id)) {
+        const a = new Audio(`mp3/mx_${id}.mp3`);
+        a.preload = 'auto';
+        cache.set(id, a);
+    }
+    return cache.get(id);
+}
+function play(id) {
+    const a = audioFor(id);
+    a.volume = volume;
+    a.currentTime = 0;
+    a.play().catch(() => {});
+}
+
+const list = document.getElementById('list');
+for (const cat of Object.keys(CAT_NAMES)) {
+    const rows = LINES.filter(l => l[4] === cat);
+    if (!rows.length) continue;
+    const head = document.createElement('div');
+    head.className = 'cat';
+    head.textContent = CAT_NAMES[cat];
+    list.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const [id, key, es, ru] of rows) {
+        const b = document.createElement('button');
+        b.innerHTML = `<span class="k">${key}</span><span class="t">${es}<br><span class="ru">${ru}</span></span>`;
+        b.addEventListener('click', () => play(id));
+        grid.appendChild(b);
+    }
+    list.appendChild(grid);
+}
+
+document.getElementById('vol').addEventListener('input', (e) => {
+    volume = e.target.value / 100;
+    document.getElementById('volv').textContent = e.target.value + '%';
+});
+
+const KEYMAP = {};
+for (const [id, key] of LINES) {
+    KEYMAP[key.toLowerCase()] = id;
+    if (/^F\d+$/i.test(key)) KEYMAP[key.toLowerCase()] = id;
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); return; }
+    const id = KEYMAP[k];
+    if (id) { e.preventDefault(); play(id); }
+});
+</script>
+</body>
+</html>
