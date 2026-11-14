@@ -454,6 +454,14 @@ class HomePage(tk.Frame):
             return
 
         if not self._incoming_enabled:
+            # Включить захват + TTS
+            ok, msg = live.start_capture()
+            if not ok:
+                self.card_in._status_label.config(
+                    text=f"● ошибка: {msg[:40]}", fg=BAD)
+                self.engine_lbl.config(
+                    text=f"захват: {msg[:40]}", fg=BAD)
+                return
             live._toggle_incoming()
             self._incoming_enabled = True
             self.card_in._status_label.config(
@@ -462,7 +470,9 @@ class HomePage(tk.Frame):
                 text="Выключить", bg=BAD)
             self.engine_lbl.config(text="входящий перевод включён", fg=GOOD)
         else:
+            # Выключить TTS + захват
             live._toggle_incoming()
+            live.stop_capture()
             self._incoming_enabled = False
             self.card_in._status_label.config(
                 text="● выключено", fg=TEXT_MUTED)

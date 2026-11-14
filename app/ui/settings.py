@@ -114,12 +114,14 @@ class SettingsPage(tk.Frame):
             mode_row, text="Режим захвата:", bg=SURFACE_1, fg=TEXT_SECONDARY,
             font=FONT_SECONDARY, anchor="w").pack(side="left")
         self.capture_mode_var = tk.StringVar(value="Legacy Input")
-        mode_combo = ttk.Combobox(
+        self.capture_mode_combo = ttk.Combobox(
             mode_row, state="readonly", width=20,
             textvariable=self.capture_mode_var)
-        mode_combo["values"] = ["Legacy Input (Stereo Mix / CABLE Output)",
-                                "WASAPI Endpoint Loopback"]
-        mode_combo.pack(side="left", padx=(SPACE_S, 0))
+        self.capture_mode_combo["values"] = ["Legacy Input (Stereo Mix / CABLE Output)",
+                                            "WASAPI Endpoint Loopback"]
+        self.capture_mode_combo.pack(side="left", padx=(SPACE_S, 0))
+        self.capture_mode_combo.bind("<<ComboboxSelected>>", self._on_capture_mode_change)
+        self.capture_mode_combo.bind("<<ComboboxSelected>>", self._on_capture_mode_change)
 
         # Мост
         bridge_row = tk.Frame(inner, bg=SURFACE_1)
@@ -343,8 +345,48 @@ class SettingsPage(tk.Frame):
         self.out_combo.bind("<<ComboboxSelected>>", self._on_out_change)
         self.capture_combo.bind("<<ComboboxSelected>>", self._on_capture_change)
 
+        # Обновить устройства захвата из LiveTab API
+        self._refresh_capture_devices()
+
         self.devices_status_lbl.config(
             text=f"устройства: {len(pool)} входов, {len(outputs)} выходов", fg=GOOD)
+
+    def _refresh_capture_devices(self) -> None:
+        """Обновить список устройств захвата из LiveTab API."""
+        live = getattr(self.studio, "live", None)
+        if live is None:
+            self.capture_combo["values"] = []
+            self.capture_combo.set("")
+            return
+        mode = self.capture_mode_var.get()
+        mode_map = {
+            "Legacy Input (Stereo Mix / CABLE Output)": "legacy_input",
+            "WASAPI Endpoint Loopback": "wasapi_endpoint",
+        }
+        code = mode_map.get(mode, "legacy_input")
+        devices = live.get_capture_devices(code)
+        self.capture_combo["values"] = [
+            f"{d['index']}: {d['name']}"
+            + (f" → Loopback [{d['loopback_index']}]"
+               if d.get("loopback_index") is not None else "")
+            for d in devices
+        ]
+        if self.capture_combo["values"]:
+            self.capture_combo.current(0)
+            # Применить выбранное устройство в контроллере
+            try:
+                first = self.capture_combo["values"][0]
+                idx = int(first.split(":")[0])
+                loopback_idx = None
+                if "Loopback [" in first:
+                    try:
+                        lb_part = first.split("Loopback [")[1].split("]")[0]
+                        loopback_idx = int(lb_part)
+                    except Exception:
+                        pass
+                live.set_capture_device(idx, loopback_idx)
+            except Exception:
+                pass
 
     def _refresh_engine(self):
         """Обновить состояние движка."""
@@ -377,9 +419,52 @@ class SettingsPage(tk.Frame):
         if val:
             self.studio.out_device = int(val.split(":")[0])
 
+    def _on_mic_change(self, _event=None):
+        val = self.mic_combo.get()
+        if val:
+            self.studio.in_device = int(val.split(":")[0])
+
+    def _on_out_change(self, _event=None):
+        val = self.out_combo.get()
+        if val:
+            self.studio.out_device = int(val.split(":")[0])
+
     def _on_capture_change(self, _event=None):
-        # Источник захвата — используется LiveTab
-        pass
+        """Сменилось устройство захвата — применить в контроллере."""
+        val = self.capture_combo.get()
+        if not val:
+            return
+        try:
+            device_idx = int(val.split(":")[0])
+        except Exception:
+            return
+        # Извлечь loopback индекс для WASAPI
+        loopback_idx = None
+        if "Loopback [" in val:
+            try:
+                lb_part = val.split("Loopback [")[1].split("]")[0]
+                loopback_idx = int(lb_part)
+            except Exception:
+                pass
+        live = getattr(self.studio, "live", None)
+        if live is not None:
+            live.set_capture_device(device_idx, loopback_idx)
+
+    def _on_capture_mode_change(self, _event=None):
+        """Сменился режим захвата — обновить список устройств."""
+        val = self.capture_mode_var.get()
+        live = getattr(self.studio, "live", None)
+        if live is None:
+            return
+        # Перевести отображаемое имя в код режима
+        mode_map = {
+            "Legacy Input (Stereo Mix / CABLE Output)": "legacy_input",
+            "WASAPI Endpoint Loopback": "wasapi_endpoint",
+        }
+        mode = mode_map.get(val, "legacy_input")
+        live.set_capture_mode(mode)
+        # Обновить список устройств для нового режима
+        self._refresh_capture_devices()
 
     def _on_out_lang(self, _event=None):
         val = self.out_lang_combo.get()

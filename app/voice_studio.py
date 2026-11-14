@@ -1820,6 +1820,11 @@ class Studio:
         # Не останавливаем посреди активной операции
         if translator.busy:
             return False, "движок занят операцией, дождитесь завершения"
+        # Остановить захват входящего звука перед движком
+        try:
+            live.stop_capture()
+        except Exception:
+            pass
         self.engine_state = "STOPPING"
         try:
             translator.stop()
@@ -1913,6 +1918,11 @@ class Studio:
         # движок живого перевода — отдельный процесс, его надо остановить
         live = getattr(self, "live", None)
         if live is not None:
+            # остановить захват входящего звука перед движком
+            try:
+                live.stop_capture()
+            except Exception:
+                pass
             try:
                 if live.translator is not None:
                     live.translator.stop()

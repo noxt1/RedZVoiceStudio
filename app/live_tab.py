@@ -1314,6 +1314,123 @@ class LiveTab:
             self._update_capture_meter(self._loopback_capture.get_level())
             self.studio.root.after(200, self._poll_capture_meter)
 
+    # ---------- API для нового UI (управление захватом) ----------
+
+    def get_capture_modes(self) -> list[tuple[str, str, bool]]:
+        """Вернуть доступные режимы захвата: (код, метка, доступен)."""
+        modes = []
+        for value, label, _key in [
+            (CaptureMode.LEGACY_INPUT.value,
+             "Устройство записи (Stereo Mix / CABLE Output)", True),
+            (CaptureMode.WASAPI_ENDPOINT.value,
+             "Устройство вывода (WASAPI Loopback)", True),
+            (CaptureMode.PROCESS_LOOPBACK.value,
+             "Процесс (Discord, RedM/FiveM)", False),
+        ]:
+            modes.append((value, label, _key))
+        return modes
+
+    def get_capture_devices(self, mode: str) -> list[dict]:
+        """Вернуть устройства для указанного режима захвата.
+
+        Каждый элемент: {"index": int, "name": str,
+        "loopback_index": int | None}.
+        """
+        try:
+            self.capture_mode.set(mode)
+        except Exception:
+            pass
+        self._refresh_capture_devices()
+        values = self.capture_device_combo["values"]
+        result: list[dict] = []
+        for v in values:
+            try:
+                idx = int(v.split(":")[0])
+            except Exception:
+                continue
+            name = v.split(":", 1)[1].strip() if ":" in v else v
+            loopback_idx = None
+            if "Loopback [" in v:
+                try:
+                    lb_part = v.split("Loopback [")[1].split("]")[0]
+                    loopback_idx = int(lb_part)
+                except Exception:
+                    pass
+            result.append({
+                "index": idx,
+                "name": name,
+                "loopback_index": loopback_idx,
+            })
+        return result
+
+    def set_capture_mode(self, mode: str) -> None:
+        """Установить режим захвата из настроек."""
+        try:
+            self.capture_mode.set(mode)
+        except Exception:
+            return
+        self._on_capture_mode_change()
+
+    def set_capture_device(self, device_index: int,
+                           loopback_idx: int | None = None) -> None:
+        """Установить устройство захвата из настроек."""
+        mode = CaptureMode(self.capture_mode.get())
+        self._loopback_capture.set_mode(mode)
+        capture_idx = (loopback_idx
+                       if mode == CaptureMode.WASAPI_ENDPOINT
+                       else device_index)
+        self._loopback_capture.set_device(capture_idx)
+        # Обновить комбобокс
+        try:
+            for i in range(len(self.capture_device_combo["values"])):
+                v = self.capture_device_combo["values"][i]
+                if v.startswith(f"{device_index}:"):
+                    self.capture_device_combo.current(i)
+                    break
+        except Exception:
+            pass
+
+    def start_capture(self) -> tuple[bool, str]:
+        """Запустить захват входящего звука.
+
+        Возвращает (ok, message).
+        """
+        if self.capture_on.get():
+            return True, "захват уже запущен"
+        if self._loopback_capture is None:
+            self._ensure_engine()
+            if self._loopback_capture is None:
+                return False, "захват не инициализирован"
+        ok = self._loopback_capture.start()
+        if not ok:
+            return False, self._loopback_capture.get_status_message()
+        self.capture_on.set(True)
+        return True, "захват запущен"
+
+    def stop_capture(self) -> None:
+        """Остановить захват входящего звука."""
+        if self.capture_on.get():
+            self._toggle_capture()
+
+    def get_capture_status(self) -> dict:
+        """Вернуть статус захвата для UI."""
+        if self._loopback_capture is None:
+            return {
+                "state": "OFF",
+                "error": "",
+                "level": 0.0,
+                "running": False,
+                "mode": None,
+            }
+        return {
+            "state": self._loopback_capture.get_status().value,
+            "error": self._loopback_capture.get_status_message(),
+            "level": self._loopback_capture.get_level(),
+            "running": self._loopback_capture.is_running(),
+            "mode": (self._loopback_capture._mode.value
+                     if self._loopback_capture._mode else None),
+        }
+
     def _toggle_incoming(self) -> None:
         """Включить/выключить входящий TTS (озвучка в наушники)."""
         on = bool(self.incoming_on.get())
