@@ -238,6 +238,9 @@ class LiveTranslator:
                 self.on_event("incoming_done", msg)
             elif kind == "lang":
                 self.on_event("lang", msg)
+            elif kind == "src_lang":
+                # подтверждение языка пользователя
+                self.on_event("src_lang", msg)
             elif kind == "models":
                 # список установленных моделей (ASR/TTS/MT)
                 self.on_event("models", msg)
@@ -260,6 +263,13 @@ class LiveTranslator:
             return True
         except Exception:
             return False
+
+    def set_src_lang(self, code: str) -> bool:
+        """Язык пользователя (источник исходящего перевода)."""
+        if not self.ready:
+            return False
+        self._send({"cmd": "src_lang", "code": str(code)})
+        return True
 
     def request_models(self) -> bool:
         """Запросить у движка список реально установленных моделей."""

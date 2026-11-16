@@ -55,6 +55,8 @@ class LiveEngine(QObject):
     capturedAudio = Signal(float)            # длительность захваченного аудио, сек
     captureChanged = Signal(bool)            # захват речи игроков вкл/выкл
     incomingChanged = Signal()               # входящая озвучка: вкл/выкл/громкость
+    outgoingChanged = Signal()               # исходящий перевод вкл/выкл
+    lastPhraseChanged = Signal()             # последняя реплика (оригинал+перевод)
     incomingActiveChanged = Signal(bool)     # сейчас играет входящий перевод
     peerLangChanged = Signal()
     peerLevelChanged = Signal(float)
@@ -150,6 +152,14 @@ class LiveEngine(QObject):
         self._lang_code = "es"
         self._peer_lang = "auto"
         self._liveliness = 2
+        # язык пользователя (источник исходящего перевода)
+        self._src_lang = "ru"
+        self._src_langs: list[dict] = []
+        # исходящий канал можно выключить независимо от входящего
+        self._outgoing_on = True
+        # последние реплики для показа оригинала и перевода
+        self._last_out: tuple[str, str] = ("", "")
+        self._last_in: tuple[str, str] = ("", "")
 
         # --- повтор из истории переводов ---
         self._replay_seq = 0
@@ -200,6 +210,36 @@ class LiveEngine(QObject):
     @Property(bool, notify=captureChanged)
     def captureOn(self) -> bool:
         return self._capture_on
+
+    @Property(bool, notify=outgoingChanged)
+    def outgoingOn(self) -> bool:
+        """Включён ли исходящий перевод (речь пользователя -> собеседник)."""
+        return self._outgoing_on
+
+    @Property(str, notify=modelsChanged)
+    def srcLang(self) -> str:
+        return self._src_lang
+
+    @Property("QVariantList", notify=modelsChanged)
+    def srcModels(self):
+        """Языки пользователя, с которых реально можно переводить."""
+        return self._src_langs
+
+    @Property(str, notify=lastPhraseChanged)
+    def lastOutOriginal(self) -> str:
+        return self._last_out[0]
+
+    @Property(str, notify=lastPhraseChanged)
+    def lastOutTranslation(self) -> str:
+        return self._last_out[1]
+
+    @Property(str, notify=lastPhraseChanged)
+    def lastInOriginal(self) -> str:
+        return self._last_in[0]
+
+    @Property(str, notify=lastPhraseChanged)
+    def lastInTranslation(self) -> str:
+        return self._last_in[1]
 
     @Property(bool, notify=incomingChanged)
     def incomingOn(self) -> bool:
@@ -289,6 +329,8 @@ class LiveEngine(QObject):
             self._incoming_on = bool(getattr(state_obj, "incomingOn", False))
             self._asr_model = str(getattr(state_obj, "asrModel", "") or "")
             self._liveliness = int(getattr(state_obj, "liveliness", self._liveliness))
+            self._outgoing_on = bool(getattr(state_obj, "outgoingOn", True))
+            self._src_lang = str(getattr(state_obj, "srcLang", "ru") or "ru")
         except Exception:
             pass
 
@@ -366,6 +408,30 @@ class LiveEngine(QObject):
         self._lang_code = code
         if self._translator is not None and self._translator.ready:
             self._translator.set_lang(code)
+
+    @Slot(bool)
+    def setOutgoing(self, on: bool) -> None:
+        """Включить/выключить исходящий перевод."""
+        self._outgoing_on = bool(on)
+        if not on:
+            if self._hold_on:
+                self._stop_hold()
+            if self._cont_on:
+                self._stop_cont()
+        self.outgoingChanged.emit()
+        self.logLine.emit("исходящий перевод включён" if on
+                          else "исходящий перевод выключен")
+
+    @Slot(str)
+    def setSrcLang(self, code: str) -> None:
+        """Язык пользователя (с какого языка переводим его речь)."""
+        self._src_lang = (code or "ru").strip() or "ru"
+        if self._translator is not None and self._translator.ready:
+            try:
+                self._translator.set_src_lang(self._src_lang)
+            except Exception:
+                pass
+        self.modelsChanged.emit()
 
     @Slot(str)
     def setPeerLang(self, code: str) -> None:
@@ -465,6 +531,9 @@ class LiveEngine(QObject):
     def _start_hold(self) -> None:
         if self._hold_on:
             return
+        if not self._outgoing_on:
+            self.errorMessage.emit("исходящий перевод выключен")
+            return
         if self._cont_on:
             self.logLine.emit("сначала выключи непрерывный режим")
             return
@@ -521,6 +590,9 @@ class LiveEngine(QObject):
 
     def _start_cont(self) -> None:
         if self._cont_on:
+            return
+        if not self._outgoing_on:
+            self.errorMessage.emit("исходящий перевод выключен")
             return
         if self._mic_idx is None:
             self.errorMessage.emit("выбери микрофон")
@@ -1144,6 +1216,9 @@ class LiveEngine(QObject):
             missing = str(data.get("missing_mt", "") or "")
             # (язык, перевод, оригинал) — история показывает оба текста
             self.peerTextReady.emit(src_lang, ru, original)
+            if original or ru:
+                self._last_in = (original, ru)
+                self.lastPhraseChanged.emit()
             if missing:
                 self.errorMessage.emit(
                     f"нет модели перевода {missing}: фраза распознана, "
@@ -1163,6 +1238,11 @@ class LiveEngine(QObject):
         elif kind == "models":
             self._apply_models(data)
             self.logLine.emit(f"модели: распознавание — {self._asr_model}")
+        elif kind == "src_lang":
+            code = str(data.get("code", "") or "")
+            if code:
+                self._src_lang = code
+            self.modelsChanged.emit()
         elif kind == "asr":
             name = str(data.get("name", "") or "")
             if name:
@@ -1183,6 +1263,8 @@ class LiveEngine(QObject):
             self._set_state("ERROR", str(data))
 
     def _on_text(self, ru: str, es: str, tone: str = "") -> None:
+        self._last_out = (ru, es)
+        self.lastPhraseChanged.emit()
         self.textReady.emit(ru, es, tone)
         self._set_busy(False)
         self._pump_queue()
@@ -1191,6 +1273,7 @@ class LiveEngine(QObject):
         if self._translator is None:
             return
         self._translator.set_lang(self._lang_code)
+        self._translator.set_src_lang(self._src_lang)
         self._translator.set_peer_lang(self._peer_lang)
         self._translator.set_liveliness(self._liveliness)
         if self._asr_model:
@@ -1213,6 +1296,13 @@ class LiveEngine(QObject):
              "installed": bool(m.get("installed"))}
             for m in (data.get("tts") or []) if isinstance(m, dict)]
         self._tts_model = str(data.get("tts_current") or "")
+        self._src_langs = [
+            {"code": str(m.get("code", "")),
+             "label": str(m.get("name", "") or m.get("code", ""))}
+            for m in (data.get("src_languages") or []) if isinstance(m, dict)]
+        cur_src = str(data.get("src_current") or "")
+        if cur_src:
+            self._src_lang = cur_src
         self._mt_info = [
             {"pair": str(m.get("pair", "")),
              "installed": bool(m.get("installed")),

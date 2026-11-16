@@ -204,6 +204,51 @@ class IncomingRoutingTests(unittest.TestCase):
         self.assertTrue(self.live.incomingActive)
 
 
+class DirectionControlTests(unittest.TestCase):
+    """Независимые направления: исходящий канал, язык пользователя."""
+
+    def setUp(self):
+        from PySide6.QtCore import QCoreApplication
+
+        self.app = QCoreApplication.instance() or QCoreApplication([])
+        from live_engine import LiveEngine
+
+        self.live = LiveEngine()
+
+    def test_outgoing_off_blocks_ptt(self):
+        errors = []
+        self.live.errorMessage.connect(errors.append)
+        self.live.setIncomingEnabled = mock.Mock()
+        self.live.setOutgoing(False)
+        self.live._mic_idx = 3
+        self.live.pressToTalk()
+        self.assertFalse(self.live._hold_on)
+        self.assertTrue(errors)
+        self.assertIn("исходящий", errors[-1])
+
+    def test_outgoing_flag_updates_property(self):
+        self.live.setOutgoing(False)
+        self.assertFalse(self.live.outgoingOn)
+        self.live.setOutgoing(True)
+        self.assertTrue(self.live.outgoingOn)
+
+    def test_src_lang_forwarded_to_engine(self):
+        self.live._translator = mock.Mock()
+        self.live._translator.ready = True
+        self.live.setSrcLang("es")
+        self.assertEqual(self.live.srcLang, "es")
+        self.live._translator.set_src_lang.assert_called_with("es")
+
+    def test_last_phrase_both_directions(self):
+        self.live._on_text("Привет", "Hola", "neutral")
+        self.assertEqual(self.live.lastOutOriginal, "Привет")
+        self.assertEqual(self.live.lastOutTranslation, "Hola")
+        self.live._on_event("peer_text", {"lang": "es", "src": "Hola",
+                                          "ru": "Привет"})
+        self.assertEqual(self.live.lastInOriginal, "Hola")
+        self.assertEqual(self.live.lastInTranslation, "Привет")
+
+
 class SettingsPersistenceTests(unittest.TestCase):
     """Языки и входящий перевод сохраняются в ui_settings.json."""
 
@@ -219,6 +264,8 @@ class SettingsPersistenceTests(unittest.TestCase):
             state.setPeerLang("es")
             state.setIncomingVolume(120)
             state.setIncoming(True)
+            state.setOutgoing(False)
+            state.setSrcLang("ru")
             state.setTargetLang("it")
             state.setAsrModel("Systran/faster-whisper-small")
             with open(os.path.join(tmp, "ui_settings.json"),
@@ -228,6 +275,8 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertEqual(data["incoming_volume"], 120)
             self.assertTrue(data["incoming_on"])
             self.assertEqual(data["target_lang"], "it")
+            self.assertFalse(data["outgoing_on"])
+            self.assertEqual(data["src_lang"], "ru")
             self.assertEqual(data["asr_model"],
                              "Systran/faster-whisper-small")
             state.shutdown()

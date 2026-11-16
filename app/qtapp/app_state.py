@@ -115,7 +115,10 @@ class AppState(QObject):
         # входящий перевод (речь собеседника -> RU -> наушники)
         self._incoming_on = bool(cfg.get("incoming_on", False))
         self._incoming_volume = int(cfg.get("incoming_volume", 100))
-        # языки: вывод (ru -> X) и язык собеседника
+        # исходящий канал можно выключить независимо от входящего
+        self._outgoing_on = bool(cfg.get("outgoing_on", True))
+        # языки: источник (язык пользователя), вывод (ru -> X) и язык собеседника
+        self._src_lang = str(cfg.get("src_lang", "ru"))
         self._target_lang = str(cfg.get("target_lang", "es"))
         self._peer_lang = str(cfg.get("peer_lang", "auto"))
         # выбранная модель распознавания ('' — по умолчанию движка)
@@ -239,6 +242,16 @@ class AppState(QObject):
         """Громкость входящего перевода в наушниках, проценты."""
         return self._incoming_volume
 
+    @Property(bool, notify=settingsChanged)
+    def outgoingOn(self) -> bool:
+        """Исходящий перевод (речь пользователя) включён."""
+        return self._outgoing_on
+
+    @Property(str, notify=settingsChanged)
+    def srcLang(self) -> str:
+        """Язык пользователя (с какого языка переводится его речь)."""
+        return self._src_lang
+
     @Property(str, notify=settingsChanged)
     def targetLang(self) -> str:
         """Язык, на который переводится русская речь."""
@@ -350,6 +363,30 @@ class AppState(QObject):
         if eng is not None:
             try:
                 eng.setIncomingVolume(self._incoming_volume)
+            except Exception:
+                pass
+        self._save_settings()
+        self.settingsChanged.emit()
+
+    @Slot(bool)
+    def setOutgoing(self, on: bool) -> None:
+        self._outgoing_on = bool(on)
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.setOutgoing(self._outgoing_on)
+            except Exception as exc:
+                self.statusMessage.emit(f"исходящий перевод: {exc}", "err")
+        self._save_settings()
+        self.settingsChanged.emit()
+
+    @Slot(str)
+    def setSrcLang(self, code: str) -> None:
+        self._src_lang = (code or "ru").strip() or "ru"
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.setSrcLang(self._src_lang)
             except Exception:
                 pass
         self._save_settings()
@@ -766,6 +803,8 @@ class AppState(QObject):
                     "auto_start_engine": self._auto_start,
                     "fullscreen": self._fullscreen,
                     "voice_volume": self._voice_volume,
+                    "outgoing_on": self._outgoing_on,
+                    "src_lang": self._src_lang,
                     "incoming_on": self._incoming_on,
                     "incoming_volume": self._incoming_volume,
                     "target_lang": self._target_lang,

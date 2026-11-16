@@ -25,6 +25,23 @@ Item {
         return 0
     }
 
+    readonly property var srcItems: {
+        var out = []
+        var m = liveEngine.srcModels
+        for (var i = 0; i < m.length; i++)
+            out.push({ "label": m[i].label, "value": m[i].code })
+        if (out.length === 0)
+            out.push({ "label": "Русский", "value": "ru" })
+        return out
+    }
+
+    function srcIndex() {
+        var items = page.srcItems
+        for (var i = 0; i < items.length; i++)
+            if (items[i].value === appState.srcLang) return i
+        return 0
+    }
+
     function peerIndex() {
         var items = appState.peerLangItems
         for (var i = 0; i < items.length; i++)
@@ -67,6 +84,13 @@ Item {
                     }
                     Item { width: 1; height: 1 }
 
+                    AppSwitch {
+                        label: "Исходящий"
+                        checked: appState.outgoingOn
+                        onToggled: (on) => appState.setOutgoing(on)
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
                     StatusPill {
                         text: appState.engineStatusText()
                         state: {
@@ -98,11 +122,13 @@ Item {
                     spacing: 16
 
                     LangCombo {
-                        label: "ЯЗЫК ВВОДА"
+                        label: "ЯЗЫК ПОЛЬЗОВАТЕЛЯ"
                         width: 220
-                        items: page.inputLangItems
-                        currentLabel: "Русский - ru_RU"
-                        currentIndex: 0
+                        items: page.srcItems
+                        currentLabel: page.srcItems[page.srcIndex()].label
+                        currentIndex: page.srcIndex()
+                        onChanged: (i) => appState.setSrcLang(
+                            page.srcItems[i].value)
                     }
 
                     LangCombo {
@@ -238,6 +264,57 @@ Item {
 
                     Rectangle { width: parent.width; height: 1; color: Theme.border }
 
+                    // последняя реплика: оригинал и перевод в обе стороны
+                    Column {
+                        width: parent.width
+                        spacing: 2
+
+                        Text {
+                            text: "ПОСЛЕДНЯЯ РЕПЛИКА"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            font.weight: Theme.weightBold
+                            font.letterSpacing: 1.0
+                        }
+                        Text {
+                            width: parent.width
+                            text: liveEngine.lastOutOriginal
+                                  ? "Вы: " + liveEngine.lastOutOriginal : "Вы: —"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            visible: liveEngine.lastOutTranslation !== ""
+                            text: "→ " + liveEngine.lastOutTranslation
+                            color: Theme.outgoing
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            visible: liveEngine.lastInOriginal !== ""
+                            text: "Собеседник: " + liveEngine.lastInOriginal
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            visible: liveEngine.lastInTranslation !== ""
+                            text: "→ " + liveEngine.lastInTranslation
+                            color: Theme.incoming
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            elide: Text.ElideRight
+                        }
+                    }
+
                     Text {
                         text: "ПОСЛЕДНИЕ ПЕРЕВОДЫ"
                         color: Theme.textMuted
@@ -250,7 +327,7 @@ Item {
                     ListView {
                         id: recentList
                         width: parent.width
-                        height: parent.height - 200
+                        height: parent.height - 300
                         clip: true
                         model: historyModel
                         delegate: Item {

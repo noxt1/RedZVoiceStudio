@@ -310,6 +310,10 @@ class Engine:
         self.liveliness = 2
         # Язык перевода: es (по умолчанию), en, ow (олдвест), it, mg (мегрельский)
         self.lang = "es"
+        # Язык, на котором говорит пользователь (источник исходящего перевода).
+        # Сейчас надёжно поддержан только русский: MT-веса ru->X уже есть, а
+        # X->ru требует отдельной модели (появится после установки пакета).
+        self.src_lang = "ru"
         # Кэш моделей перевода: код -> (токенизатор, модель).
         # Держим не больше двух (текущий + испанский), чтобы не съедать RAM.
         self._mt_cache: dict[str, list] = {}
@@ -397,7 +401,31 @@ class Engine:
             "tts": [{"name": "XTTS v2 (клон голоса)", "installed": bool(xtts)}],
             "tts_current": "XTTS v2 (клон голоса)",
             "mt": mt,
+            "src_languages": self.src_languages(),
+            "src_current": self.src_lang,
         }
+
+    def src_languages(self) -> list[dict]:
+        """Языки, с которых можно переводить на выбранный язык."""
+        out = [{"code": "ru", "name": "Русский", "installed": True}]
+        for code in ("es", "en", "it"):
+            if self.reverse_available(code):
+                info = _lang_info(code)
+                out.append({"code": code, "name": info["title"],
+                            "installed": True})
+        return out
+
+    def set_src_lang(self, code: str) -> str:
+        """Язык пользователя (источник исходящего перевода)."""
+        code = (code or "").lower().strip()
+        allowed = {item["code"] for item in self.src_languages()}
+        if code not in allowed:
+            log(f"[engine] язык пользователя {code!r} не поддержан "
+                f"(доступны: {sorted(allowed)})")
+            return self.src_lang
+        self.src_lang = code
+        log(f"[engine] язык пользователя: {code}")
+        return self.src_lang
 
     def set_asr(self, name: str) -> str:
         """Переключить модель распознавания (только уже установленную)."""
@@ -816,7 +844,7 @@ class Engine:
 
         # no_speech_threshold/log_prob_threshold — отсекаем пустые сегменты
         segs, _ = self.asr.transcribe(
-            audio, language="ru", beam_size=1, vad_filter=False,
+            audio, language=self.src_lang, beam_size=1, vad_filter=False,
             condition_on_previous_text=False,
             no_speech_threshold=0.6, log_prob_threshold=-1.0)
         # faster-whisper отдаёт генератор — собираем ОДИН раз
@@ -1235,6 +1263,10 @@ def main() -> None:
                 # язык чужой речи: auto или конкретный
                 code = engine.set_peer_lang(msg.get("code", "auto"))
                 emit({"event": "peer_lang", "code": code})
+            elif cmd == "src_lang":
+                # язык пользователя (источник исходящего перевода)
+                code = engine.set_src_lang(msg.get("code", "ru"))
+                emit({"event": "src_lang", "code": code})
             elif cmd == "models":
                 # что реально установлено (ASR/TTS/MT) — для интерфейса
                 emit({"event": "models", **engine.models_info()})
