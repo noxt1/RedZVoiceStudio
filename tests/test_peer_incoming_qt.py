@@ -232,6 +232,22 @@ class DirectionControlTests(unittest.TestCase):
         self.live.setOutgoing(True)
         self.assertTrue(self.live.outgoingOn)
 
+    def test_auto_download_off_by_default_and_forwarded(self):
+        self.assertFalse(self.live.autoDownload)
+        self.live._translator = mock.Mock()
+        self.live._translator.ready = True
+        self.live.setAutoDownload(True)
+        self.assertTrue(self.live.autoDownload)
+        self.live._translator.set_auto_download.assert_called_with(True)
+
+    def test_package_event_updates_status(self):
+        self.live._on_event("package", {"pair": "es->ru",
+                                        "state": "downloading"})
+        self.assertIn("es->ru", self.live.packageStatus)
+        self.live._on_event("package", {"pair": "es->ru",
+                                        "state": "installed"})
+        self.assertIn("установлен", self.live.packageStatus)
+
     def test_src_lang_forwarded_to_engine(self):
         self.live._translator = mock.Mock()
         self.live._translator.ready = True
@@ -276,6 +292,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertTrue(data["incoming_on"])
             self.assertEqual(data["target_lang"], "it")
             self.assertFalse(data["outgoing_on"])
+            self.assertFalse(data["auto_download"])
             self.assertEqual(data["src_lang"], "ru")
             self.assertEqual(data["asr_model"],
                              "Systran/faster-whisper-small")

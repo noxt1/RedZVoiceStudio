@@ -238,6 +238,11 @@ class LiveTranslator:
                 self.on_event("incoming_done", msg)
             elif kind == "lang":
                 self.on_event("lang", msg)
+            elif kind == "package":
+                # статус языкового пакета (скачивание/установка/ошибка)
+                self.on_event("package", msg)
+            elif kind == "auto_download":
+                self.on_event("auto_download", msg)
             elif kind == "src_lang":
                 # подтверждение языка пользователя
                 self.on_event("src_lang", msg)
@@ -269,6 +274,13 @@ class LiveTranslator:
         if not self.ready:
             return False
         self._send({"cmd": "src_lang", "code": str(code)})
+        return True
+
+    def set_auto_download(self, on: bool) -> bool:
+        """Разрешить движку скачивать недостающие пакеты перевода."""
+        if not self.ready:
+            return False
+        self._send({"cmd": "set_auto_download", "on": bool(on)})
         return True
 
     def request_models(self) -> bool:

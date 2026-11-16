@@ -117,6 +117,8 @@ class AppState(QObject):
         self._incoming_volume = int(cfg.get("incoming_volume", 100))
         # исходящий канал можно выключить независимо от входящего
         self._outgoing_on = bool(cfg.get("outgoing_on", True))
+        # автоскачивание языковых пакетов — по умолчанию ВЫКЛЮЧЕНО
+        self._auto_download = bool(cfg.get("auto_download", False))
         # языки: источник (язык пользователя), вывод (ru -> X) и язык собеседника
         self._src_lang = str(cfg.get("src_lang", "ru"))
         self._target_lang = str(cfg.get("target_lang", "es"))
@@ -246,6 +248,23 @@ class AppState(QObject):
     def outgoingOn(self) -> bool:
         """Исходящий перевод (речь пользователя) включён."""
         return self._outgoing_on
+
+    @Property(bool, notify=settingsChanged)
+    def autoDownload(self) -> bool:
+        """Разрешена ли автоматическая загрузка языковых пакетов."""
+        return self._auto_download
+
+    @Slot(bool)
+    def setAutoDownload(self, on: bool) -> None:
+        self._auto_download = bool(on)
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.setAutoDownload(self._auto_download)
+            except Exception:
+                pass
+        self._save_settings()
+        self.settingsChanged.emit()
 
     @Property(str, notify=settingsChanged)
     def srcLang(self) -> str:
@@ -804,6 +823,7 @@ class AppState(QObject):
                     "fullscreen": self._fullscreen,
                     "voice_volume": self._voice_volume,
                     "outgoing_on": self._outgoing_on,
+                    "auto_download": self._auto_download,
                     "src_lang": self._src_lang,
                     "incoming_on": self._incoming_on,
                     "incoming_volume": self._incoming_volume,

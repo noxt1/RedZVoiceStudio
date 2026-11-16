@@ -12,7 +12,7 @@
 | Проверка | Команда | Результат |
 |---|---|---|
 | Компиляция Python | `python -m compileall -q app` | PASS (без ошибок) |
-| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 78 тестов (было 62; +16 в `test_peer_incoming_qt.py`) |
+| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 84 теста (+22 в `test_peer_incoming_qt.py`) |
 | QML-линт | `pyside6-qmllint -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/RedZ/*.qml` | PASS — 0 ошибок (только Info/Warning) |
 | Аудит API QML→Python | обход всех `appState.*`, `liveEngine.*`, `voiceController.*`, `*Model.*` в QML и `hasattr` на живых объектах | PASS — 74 обращения, 0 отсутствующих |
 | Аудит сигналов | AST: сравнение арности `Signal(...)` и `.emit(...)` | PASS — 0 расхождений (было 2, исправлено) |
@@ -63,6 +63,10 @@
 | Иностранная речь без модели | испанский аудио → `peer_text` | PASS — «нет модели перевода es->ru», без ложного английского |
 | Список моделей в UI | запрос `models` после `READY` | PASS — ASR одна, TTS одна, `ru->es` установлен |
 | Настройки (спринт) | `peer_lang`, `incoming_volume`, `incoming_on` | PASS — `ui_settings.json` |
+| Пакет ES→RU | `snapshot_download` + загрузка модели + 3 фразы | PASS — 594 МБ, переводы верные |
+| ES→RU сквозной | испанская фраза → loopback → ASR → MT → TTS | PASS — «Hola, ¿cómo estás?» → «Привет, как дела?», 2 чанка |
+| Автоопределение языка | `peer_lang=auto` + испанский клип | PASS — `lang=es`; при уверенности < 0.60 фраза пропускается |
+| Автоскачивание пакетов | `setAutoDownload(True/False)` | PASS — состояние доходит до движка и сохраняется; реальная загрузка не запускалась |
 | Интерфейс после изменений | скриншоты «Перевод» и «Настройки» | PASS — наложений нет, блок моделей помещается |
 | Запись образца | `toggleRecording` | UNVERIFIED — старт/стоп работают, сигнала в микрофоне не было |
 

@@ -125,6 +125,10 @@ ASR_FALLBACK = os.environ.get("REDZ_ASR_FALLBACK", "Systran/faster-whisper-small
 # Замер: research/bench_optimization.py, research/bench_int8_quality.py
 ASR_COMPUTE = os.environ.get("REDZ_ASR_COMPUTE", "int8_float16")
 
+# Минимальная уверенность определения языка собеседника (режим auto).
+# Ниже порога фраза не переводится: лучше пропустить, чем озвучить не то.
+PEER_LANG_MIN_CONF = float(os.environ.get("REDZ_PEER_LANG_CONF", "0.60"))
+
 
 def _hf_hub_dir() -> str:
     """Каталог кэша HuggingFace (оттуда движок берёт модели)."""
@@ -325,6 +329,10 @@ class Engine:
         self._peer_thread: threading.Thread | None = None
         # Язык чужой речи: "auto" (определяем сами) или es/en/it/ru
         self.peer_lang = "auto"
+        # Автоскачивание недостающих пакетов перевода — ВЫКЛЮЧЕНО по умолчанию.
+        # Включается только пользователем в настройках приложения.
+        self.auto_download = False
+        self._downloaded: set[str] = set()
         # Последнее, что мы САМИ сказали в игру — по нему отсекаем
         # собственный голос, попавший в перехват из наушников.
         self.last_spoken: list[str] = []
@@ -401,6 +409,7 @@ class Engine:
             "tts": [{"name": "XTTS v2 (клон голоса)", "installed": bool(xtts)}],
             "tts_current": "XTTS v2 (клон голоса)",
             "mt": mt,
+            "auto_download": self.auto_download,
             "src_languages": self.src_languages(),
             "src_current": self.src_lang,
         }
@@ -453,6 +462,31 @@ class Engine:
         log(f"[engine] ASR переключена на {name} за "
             f"{int((time.time() - t0) * 1000)} мс")
         return self.asr_model
+
+    def download_package(self, src: str) -> bool:
+        """Скачать веса перевода src->ru (только по настройке пользователя)."""
+        names = [_chain_name(i) for i in _reverse_mt_names(src)]
+        if not names:
+            return False
+        pair = f"{src}->ru"
+        emit({"event": "package", "pair": pair, "state": "downloading",
+              "models": names})
+        log(f"[engine] скачивание пакета {pair}: {names}")
+        try:
+            from huggingface_hub import snapshot_download
+            for name in names:
+                snapshot_download(name)
+        except Exception as exc:  # noqa: BLE001
+            log(f"[engine] пакет {pair} не скачался: {exc}")
+            emit({"event": "package", "pair": pair, "state": "error",
+                  "message": f"{type(exc).__name__}: {exc}"})
+            return False
+        ok = self.reverse_available(src)
+        self._downloaded.add(pair)
+        log(f"[engine] пакет {pair}: {'установлен' if ok else 'файлы не найдены'}")
+        emit({"event": "package", "pair": pair,
+              "state": "installed" if ok else "error"})
+        return ok
 
     def reverse_available(self, src: str) -> bool:
         """Есть ли чем перевести чужую речь на русский (модели на диске)."""
@@ -904,12 +938,17 @@ class Engine:
                         f"пропускаю ({text!r})")
                     continue
                 if not self.reverse_available(lang):
-                    # Не подменяем перевод английским текстом: лучше явно
-                    # сказать, что для направления нет модели.
-                    log(f"[engine] перехват {lang}->ru: нет модели перевода")
-                    emit({"event": "peer_text", "src": text, "ru": "",
-                          "lang": lang, "missing_mt": f"{lang}->ru"})
-                    continue
+                    # Если пользователь разрешил автоскачивание — скачиваем
+                    # пакет и продолжаем с ЭТОЙ ЖЕ фразой (не теряем её).
+                    if self.auto_download and self.download_package(lang):
+                        log(f"[engine] пакет {lang}->ru готов, продолжаю фразу")
+                    else:
+                        # Не подменяем перевод английским текстом: лучше явно
+                        # сказать, что для направления нет модели.
+                        log(f"[engine] перехват {lang}->ru: нет модели перевода")
+                        emit({"event": "peer_text", "src": text, "ru": "",
+                              "lang": lang, "missing_mt": f"{lang}->ru"})
+                        continue
                 ru = self._translate_peer_to_ru(text, lang, pcm, sr)
                 emit({"event": "peer_text", "src": text, "ru": ru,
                       "lang": lang})
@@ -966,6 +1005,17 @@ class Engine:
         if not text or is_hallucination(text):
             return "", self.peer_lang
         detected = getattr(info, "language", None) or self.peer_lang
+        prob = float(getattr(info, "language_probability", 0.0) or 0.0)
+        if self.peer_lang == "auto":
+            log(f"[engine] язык собеседника: {detected}, "
+                f"уверенность {prob:.2f}")
+            # Одно короткое слово легко «опознать» неверно (испанская фраза
+            # на 3 с ушла в японский). При низкой уверенности фразу не
+            # переводим, а ждём следующую или ручного выбора.
+            if prob < PEER_LANG_MIN_CONF:
+                log(f"[engine] уверенность ниже {PEER_LANG_MIN_CONF:.2f} — "
+                    f"язык не применяю, фразу пропускаю")
+                return "", self.peer_lang
         if detected == "auto":
             detected = "es"
         return text, detected
@@ -1263,6 +1313,12 @@ def main() -> None:
                 # язык чужой речи: auto или конкретный
                 code = engine.set_peer_lang(msg.get("code", "auto"))
                 emit({"event": "peer_lang", "code": code})
+            elif cmd == "set_auto_download":
+                # автоскачивание пакетов (по умолчанию выключено)
+                engine.auto_download = bool(msg.get("on", False))
+                log(f"[engine] автоскачивание пакетов: "
+                    f"{'вкл' if engine.auto_download else 'выкл'}")
+                emit({"event": "auto_download", "on": engine.auto_download})
             elif cmd == "src_lang":
                 # язык пользователя (источник исходящего перевода)
                 code = engine.set_src_lang(msg.get("code", "ru"))

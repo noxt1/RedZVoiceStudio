@@ -61,6 +61,8 @@ class LiveEngine(QObject):
     peerLangChanged = Signal()
     peerLevelChanged = Signal(float)
     modelsChanged = Signal()                 # установленные модели ASR/TTS/MT
+    autoDownloadChanged = Signal()
+    packageChanged = Signal()                # статус загрузки языкового пакета
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -157,6 +159,9 @@ class LiveEngine(QObject):
         self._src_langs: list[dict] = []
         # исходящий канал можно выключить независимо от входящего
         self._outgoing_on = True
+        # автоскачивание языковых пакетов (по умолчанию ВЫКЛЮЧЕНО)
+        self._auto_download = False
+        self._package_status = ""
         # последние реплики для показа оригинала и перевода
         self._last_out: tuple[str, str] = ("", "")
         self._last_in: tuple[str, str] = ("", "")
@@ -215,6 +220,27 @@ class LiveEngine(QObject):
     def outgoingOn(self) -> bool:
         """Включён ли исходящий перевод (речь пользователя -> собеседник)."""
         return self._outgoing_on
+
+    @Property(bool, notify=autoDownloadChanged)
+    def autoDownload(self) -> bool:
+        """Разрешено ли движку скачивать недостающие пакеты."""
+        return self._auto_download
+
+    @Property(str, notify=packageChanged)
+    def packageStatus(self) -> str:
+        return self._package_status
+
+    @Slot(bool)
+    def setAutoDownload(self, on: bool) -> None:
+        self._auto_download = bool(on)
+        if self._translator is not None and self._translator.ready:
+            try:
+                self._translator.set_auto_download(self._auto_download)
+            except Exception:
+                pass
+        self.autoDownloadChanged.emit()
+        self.logLine.emit("автоскачивание пакетов включено" if on
+                          else "автоскачивание пакетов выключено")
 
     @Property(str, notify=modelsChanged)
     def srcLang(self) -> str:
@@ -330,6 +356,7 @@ class LiveEngine(QObject):
             self._asr_model = str(getattr(state_obj, "asrModel", "") or "")
             self._liveliness = int(getattr(state_obj, "liveliness", self._liveliness))
             self._outgoing_on = bool(getattr(state_obj, "outgoingOn", True))
+            self._auto_download = bool(getattr(state_obj, "autoDownload", False))
             self._src_lang = str(getattr(state_obj, "srcLang", "ru") or "ru")
         except Exception:
             pass
@@ -1238,6 +1265,24 @@ class LiveEngine(QObject):
         elif kind == "models":
             self._apply_models(data)
             self.logLine.emit(f"модели: распознавание — {self._asr_model}")
+        elif kind == "package":
+            pair = str(data.get("pair", "") or "")
+            state = str(data.get("state", "") or "")
+            msg = str(data.get("message", "") or "")
+            if state == "downloading":
+                self._package_status = f"скачиваю пакет {pair}…"
+                self.logLine.emit(self._package_status)
+            elif state == "installed":
+                self._package_status = f"пакет {pair} установлен"
+                self.logLine.emit(self._package_status)
+                self.requestModels()
+            else:
+                self._package_status = f"пакет {pair}: ошибка {msg}".strip()
+                self.errorMessage.emit(self._package_status)
+            self.packageChanged.emit()
+        elif kind == "auto_download":
+            self._auto_download = bool(data.get("on"))
+            self.autoDownloadChanged.emit()
         elif kind == "src_lang":
             code = str(data.get("code", "") or "")
             if code:
@@ -1273,6 +1318,7 @@ class LiveEngine(QObject):
         if self._translator is None:
             return
         self._translator.set_lang(self._lang_code)
+        self._translator.set_auto_download(self._auto_download)
         self._translator.set_src_lang(self._src_lang)
         self._translator.set_peer_lang(self._peer_lang)
         self._translator.set_liveliness(self._liveliness)

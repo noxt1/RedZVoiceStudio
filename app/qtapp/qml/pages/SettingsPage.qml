@@ -225,6 +225,38 @@ Item {
                         }
                     }
 
+                    // автоскачивание языковых пакетов (по умолчанию выкл.)
+                    Row {
+                        width: parent.width
+                        spacing: 10
+
+                        Icon {
+                            source: "icons/folder.svg"
+                            color: Theme.textMuted
+                            size: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            text: "Автоскачивание пакетов"
+                            width: 196
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 13
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        AppSwitch {
+                            checked: appState.autoDownload
+                            onToggled: (on) => appState.setAutoDownload(on)
+                        }
+                        Text {
+                            text: "может скачивать модели из интернета"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 11
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+
                     Row {
                         width: parent.width
                         spacing: 10
