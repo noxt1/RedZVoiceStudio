@@ -243,6 +243,11 @@ class LiveTranslator:
                 self.on_event("package", msg)
             elif kind == "auto_download":
                 self.on_event("auto_download", msg)
+            elif kind in ("catalog", "download", "verify", "model_removed",
+                          "model_selected", "packs", "pack", "pack_verify",
+                          "peer_lang", "peer_lang_detected", "unloaded"):
+                # управление моделями и языковые пакеты
+                self.on_event(kind, msg)
             elif kind == "src_lang":
                 # подтверждение языка пользователя
                 self.on_event("src_lang", msg)
@@ -274,6 +279,13 @@ class LiveTranslator:
         if not self.ready:
             return False
         self._send({"cmd": "src_lang", "code": str(code)})
+        return True
+
+    def send(self, msg: dict) -> bool:
+        """Отправить произвольную команду движку (каталог/загрузки/пакеты)."""
+        if not self.proc:
+            return False
+        self._send(msg)
         return True
 
     def set_auto_download(self, on: bool) -> bool:

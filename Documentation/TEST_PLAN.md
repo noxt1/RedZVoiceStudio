@@ -66,7 +66,15 @@
 | Пакет ES→RU | `snapshot_download` + загрузка модели + 3 фразы | PASS — 594 МБ, переводы верные |
 | ES→RU сквозной | испанская фраза → loopback → ASR → MT → TTS | PASS — «Hola, ¿cómo estás?» → «Привет, как дела?», 2 чанка |
 | Автоопределение языка | `peer_lang=auto` + испанский клип | PASS — `lang=es`; при уверенности < 0.60 фраза пропускается |
-| Автоскачивание пакетов | `setAutoDownload(True/False)` | PASS — состояние доходит до движка и сохраняется; реальная загрузка не запускалась |
+| Автоскачивание пакетов | `setAutoDownload(True/False)` | PASS — состояние доходит до движка и сохраняется |
+| Каталог моделей | `{"cmd":"catalog"}` | PASS — 12 моделей, типы ASR/MT/TTS, состояния NOT INSTALLED/STOPPED/READY |
+| Выбор ASR | `model_select` | PASS — `model_selected asr=faster-whisper-large-v3-turbo` |
+| Проверка целостности | `model_verify es-ru` | PASS — ok, обязательные файлы на месте |
+| Отмена загрузки | `model_download` ru-en → `model_cancel` | PASS — DOWNLOADING → CANCELLED, модель не установлена |
+| Автозагрузка отсутствующего пакета | английская речь + auto_download | PASS — скачан en-ru (~594 МБ), `package installed`, первая фраза переведена и озвучена |
+| Языковые пакеты | `{"cmd":"packs"}` | PASS — 10 пакетов; es READY, en/de/it/fr/zh/hi/ar PARTIAL, pt/ja UNSUPPORTED |
+| Автоопределение языка | две английские фразы после испанской | PASS — смена es→en после подтверждения (prob 0.69) |
+| UI «Модели» | запуск + снимки | PASS — `shots/models_asr.png`, `models_mt.png`, `models_packs.png` |
 | Интерфейс после изменений | скриншоты «Перевод» и «Настройки» | PASS — наложений нет, блок моделей помещается |
 | Запись образца | `toggleRecording` | UNVERIFIED — старт/стоп работают, сигнала в микрофоне не было |
 

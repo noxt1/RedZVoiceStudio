@@ -75,15 +75,12 @@ class ModelInfoTests(unittest.TestCase):
             self.assertIsInstance(pairs[pair]["installed"], bool)
 
     def test_reverse_available_uses_installed_models(self):
-        with mock.patch.object(live_translate, "_reverse_mt_names",
-                               return_value=["Helsinki-NLP/opus-mt-es-ru"]), \
-                mock.patch.object(live_translate, "_model_installed",
-                                  return_value=True):
+        # маршрут берётся из реестра моделей, установленность — с диска
+        with mock.patch.object(live_translate.mreg, "installed",
+                               return_value=True):
             self.assertTrue(self.engine.reverse_available("es"))
-        with mock.patch.object(live_translate, "_reverse_mt_names",
-                               return_value=["Helsinki-NLP/opus-mt-es-ru"]), \
-                mock.patch.object(live_translate, "_model_installed",
-                                  return_value=False):
+        with mock.patch.object(live_translate.mreg, "installed",
+                               return_value=False):
             self.assertFalse(self.engine.reverse_available("es"))
 
     def test_russian_needs_no_model(self):

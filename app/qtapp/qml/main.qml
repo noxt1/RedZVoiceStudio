@@ -27,6 +27,7 @@ Window {
         { "key": "home",     "icon": "icons/home.svg",      "label": "Главная" },
         { "key": "live",     "icon": "icons/wave.svg",      "label": "Перевод" },
         { "key": "voices",   "icon": "icons/mic.svg",       "label": "Голос" },
+        { "key": "models",   "icon": "icons/layers.svg",    "label": "Модели" },
         { "key": "settings", "icon": "icons/settings.svg",  "label": "Настройки" },
         { "key": "history",  "icon": "icons/history.svg",   "label": "История" },
         { "key": "phrases",  "icon": "icons/bolt.svg",      "label": "Фразы" }
@@ -269,6 +270,7 @@ Window {
             if (window.section === "history") return "pages/HistoryPage.qml"
             if (window.section === "phrases") return "pages/PhrasesPage.qml"
             if (window.section === "live") return "pages/LivePage.qml"
+            if (window.section === "models") return "pages/ModelsPage.qml"
             return "pages/HomePage.qml"
         }
     }

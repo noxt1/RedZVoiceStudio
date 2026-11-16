@@ -29,6 +29,8 @@ import base64
 import json
 import os
 import queue
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -46,6 +48,12 @@ try:
     import voice_lang
 except Exception:  # noqa: BLE001
     voice_lang = None
+
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import model_registry as mreg
+except Exception:  # noqa: BLE001
+    mreg = None
 
 
 def _lang_info(code: str) -> dict:
@@ -333,6 +341,20 @@ class Engine:
         # Включается только пользователем в настройках приложения.
         self.auto_download = False
         self._downloaded: set[str] = set()
+        # Управление моделями (Model Manager).
+        self.loaded = False
+        self.reference = ""
+        self._cancel_requests: set[str] = set()
+        self._download_ids: set[str] = set()
+        self._chain_repos: dict[str, list[str]] = {}
+        # Подтверждённый язык собеседника (режим auto, фаза 4).
+        self.peer_lang_confirmed = ""
+        self._lang_hits: list[tuple[str, float]] = []
+        self._peer_lang_prob = 0.0
+        self._peer_lang_min_sec = float(
+            os.environ.get("REDZ_PEER_LANG_MIN_SEC", "1.1"))
+        self._peer_lang_min_words = int(
+            os.environ.get("REDZ_PEER_LANG_MIN_WORDS", "2"))
         # Последнее, что мы САМИ сказали в игру — по нему отсекаем
         # собственный голос, попавший в перехват из наушников.
         self.last_spoken: list[str] = []
@@ -340,6 +362,7 @@ class Engine:
     # ---------- загрузка ----------
     def load(self, reference: str) -> None:
         import torch
+        self.reference = reference or self.reference
         from faster_whisper import WhisperModel
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
@@ -364,6 +387,7 @@ class Engine:
         # перевод: по умолчанию на CPU — освобождаем видеопамять для игры
         self._mt_for(self.lang)
         self.load_ms = int((time.time() - t0) * 1000)
+        self.loaded = True
         log(f"[engine] ASR + перевод загружены за {self.load_ms} мс "
             f"(перевод на {MT_DEVICE})")
 
@@ -463,27 +487,325 @@ class Engine:
             f"{int((time.time() - t0) * 1000)} мс")
         return self.asr_model
 
+    # ---------- каталог и управление моделями ----------
+    REQUIRED_FILES = {
+        "asr": ("model.bin", "config.json"),
+        "tts": ("config.json", "model.pth", "vocab.json"),
+        "mt": ("config.json", "pytorch_model.bin"),
+    }
+
+    def _type_of(self, repo: str) -> str:
+        if mreg is None:
+            return "mt"
+        item = mreg.model_by_id(repo)
+        return (item or {}).get("type", "mt")
+
+    def verify_repo(self, repo: str) -> dict:
+        """Проверить целостность установленной модели.
+
+        HuggingFace при загрузке сам сверяет sha256 LFS-файлов; здесь
+        дополнительно проверяем наличие обязательных файлов и размер
+        относительно ожидаемого (защита от оборванной загрузки).
+        """
+        kind = self._type_of(repo)
+        size = mreg.disk_size_mb(repo) if mreg else 0.0
+        result = {"id": repo, "ok": False, "missing": [], "size_mb": size}
+        if not mreg or not mreg.installed(repo):
+            result["missing"] = ["модель не установлена"]
+            return result
+        base = os.path.join(mreg.hf_hub_dir(),
+                            "models--" + repo.replace("/", "--"))
+        names: set[str] = set()
+        for root, _dirs, files in os.walk(base):
+            names.update(files)
+        missing = [f for f in self.REQUIRED_FILES.get(kind, ())
+                   if not any(n == f or n.startswith(f) for n in names)]
+        if missing:
+            result["missing"] = missing
+            return result
+        expected = self._expected_mb(repo)
+        if expected and size < expected * 0.85:
+            result["missing"] = [f"файлы неполные ({size} из ~{expected} МБ)"]
+            return result
+        result["ok"] = True
+        return result
+
+    def _expected_mb(self, repo: str) -> float:
+        if mreg is None:
+            return 0.0
+        if repo in mreg.ASR_SIZES_MB:
+            return float(mreg.ASR_SIZES_MB[repo])
+        item = mreg.model_by_id(repo)
+        return float((item or {}).get("size_mb", 0) or 0)
+
+    def _model_state(self, repo: str) -> str:
+        if repo in getattr(self, "_download_ids", set()):
+            return "DOWNLOADING"
+        if not mreg or not mreg.installed(repo):
+            return "NOT INSTALLED"
+        kind = self._type_of(repo)
+        if kind == "asr":
+            return "READY" if repo == self.asr_model and self.asr \
+                else "STOPPED"
+        if kind == "tts":
+            return "READY" if self.tts is not None else "STOPPED"
+        # модель уже загружена в память, если она есть в любой цепочке
+        for key in list(self._mt_cache):
+            chain = self._mt_cache.get(key) or []
+            if any(repo in getattr(self, "_chain_repos", {}).get(key, [])
+                   for _ in chain):
+                return "READY"
+        return "STOPPED"
+
+    def catalog(self) -> list[dict]:
+        """Каталог моделей с фактическим состоянием установки."""
+        if mreg is None:
+            return []
+        out = []
+        for item in mreg.catalog():
+            repo = item["repo"]
+            row = {k: item[k] for k in
+                   ("id", "type", "name", "repo", "developer", "source",
+                    "description", "languages", "license", "size_mb",
+                    "ram_mb", "vram_mb", "devices") if k in item}
+            row["direction"] = item.get("direction", "")
+            row["installed"] = bool(mreg.installed(repo))
+            row["disk_mb"] = mreg.disk_size_mb(repo) if row["installed"] else 0
+            row["state"] = self._model_state(repo)
+            out.append(row)
+        return out
+
+    def _active_downloads(self) -> set:
+        return getattr(self, "_download_ids", set())
+
+    def cancel_download(self, request: str) -> None:
+        self._cancel_requests.add(request or "")
+        log(f"[engine] отмена загрузки {request!r}")
+
+    def remove_model(self, repo: str) -> dict:
+        """Удалить модель из кэша (если она не используется сейчас)."""
+        if repo == self.asr_model and self.asr is not None:
+            raise RuntimeError("модель распознавания используется — сначала "
+                               "переключите или остановите движок")
+        if not mreg or not mreg.installed(repo):
+            return {"id": repo, "ok": True, "size_mb": 0}
+        size = mreg.disk_size_mb(repo)
+        base = os.path.join(mreg.hf_hub_dir(),
+                            "models--" + repo.replace("/", "--"))
+        # если модель в памяти — выгружаем её из кэша цепочек
+        for key in list(self._mt_cache):
+            self._mt_cache.pop(key, None)
+        self.mt = None
+        self.mt_tok = None
+        shutil.rmtree(base, ignore_errors=True)
+        log(f"[engine] модель удалена: {repo} ({size} МБ)")
+        return {"id": repo, "ok": True, "size_mb": size}
+
+    def download_repos(self, repos: list[str], request: str,
+                       label: str = "") -> bool:
+        """Скачать несколько моделей с прогрессом и отменой.
+
+        Одна модели может входить в несколько пакетов — если она уже на
+        диске, повторно не качается (используем существующий кэш).
+        """
+        request = request or ",".join(repos)
+        for repo in repos:
+            if mreg and mreg.installed(repo):
+                emit({"event": "download", "request": request, "id": repo,
+                      "state": "READY", "percent": 100, "label": label})
+                continue
+            if request in self._cancel_requests:
+                self._cancel_requests.discard(request)
+                emit({"event": "download", "request": request, "id": repo,
+                      "state": "CANCELLED", "percent": 0,
+                      "label": label})
+                return False
+            if not self._download_one(repo, request, label):
+                return False
+        return True
+
+    def _download_one(self, repo: str, request: str, label: str) -> bool:
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "download_model.py")
+        expected = self._expected_mb(repo)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self._download_ids = getattr(self, "_download_ids", set())
+        self._download_ids.add(repo)
+        emit({"event": "download", "request": request, "id": repo,
+              "state": "DOWNLOADING", "percent": 0, "label": label,
+              "expected_mb": expected})
+        log(f"[engine] загрузка {repo} (~{expected} МБ)")
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, script, "--repo", repo],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=flags)
+        except Exception as exc:  # noqa: BLE001
+            self._download_ids.discard(repo)
+            emit({"event": "download", "request": request, "id": repo,
+                  "state": "ERROR", "label": label,
+                  "message": f"{type(exc).__name__}: {exc}"})
+            return False
+        while proc.poll() is None:
+            if request in self._cancel_requests:
+                self._cancel_requests.discard(request)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=8)
+                except Exception:
+                    proc.kill()
+                self._download_ids.discard(repo)
+                log(f"[engine] загрузка {repo} отменена")
+                emit({"event": "download", "request": request, "id": repo,
+                      "state": "CANCELLED", "percent": 0, "label": label})
+                return False
+            cur = mreg.disk_size_mb(repo) if mreg else 0.0
+            pct = int(min(99, cur * 100.0 / expected)) if expected else 0
+            emit({"event": "download", "request": request, "id": repo,
+                  "state": "DOWNLOADING", "percent": pct,
+                  "mb": round(cur, 1), "expected_mb": expected,
+                  "label": label})
+            time.sleep(0.5)
+        out, err = proc.communicate()
+        self._download_ids.discard(repo)
+        if proc.returncode != 0:
+            msg = (err or out or "").strip().splitlines()
+            msg = msg[-1] if msg else "неизвестная ошибка"
+            log(f"[engine] {repo} не скачалась: {msg}")
+            emit({"event": "download", "request": request, "id": repo,
+                  "state": "ERROR", "percent": 0, "label": label,
+                  "message": msg[:300]})
+            return False
+        emit({"event": "download", "request": request, "id": repo,
+              "state": "INSTALLING", "percent": 100, "label": label})
+        check = self.verify_repo(repo)
+        if not check["ok"]:
+            emit({"event": "download", "request": request, "id": repo,
+                  "state": "ERROR", "label": label,
+                  "message": "; ".join(check["missing"])[:300]})
+            return False
+        log(f"[engine] {repo} установлена ({check['size_mb']} МБ)")
+        emit({"event": "download", "request": request, "id": repo,
+              "state": "READY", "percent": 100, "label": label,
+              "disk_mb": check["size_mb"]})
+        return True
+
+    def select_model(self, kind: str, model_id: str) -> dict:
+        """Выбрать модель: asr / tts / mt (направление перевода)."""
+        if kind == "asr":
+            name = self.set_asr(model_id)
+            return {"kind": "asr", "value": name}
+        if kind == "tts":
+            if model_id and model_id != "tts-hub/XTTS-v2":
+                raise RuntimeError(f"неизвестная модель синтеза: {model_id}")
+            return {"kind": "tts", "value": "tts-hub/XTTS-v2"}
+        if kind == "mt":
+            if mreg is None:
+                raise RuntimeError("нет каталога моделей")
+            item = mreg.model_by_id(model_id)
+            if not item or item["type"] != "mt":
+                raise RuntimeError(f"неизвестная модель перевода: {model_id}")
+            src, dst = item["direction"].split("->")
+            if src != "ru":
+                raise RuntimeError("выбор языка перевода — это ru->X; "
+                                   f"{src}->{dst} используется для входящей речи")
+            code = self.set_lang(dst)
+            return {"kind": "mt", "value": item["id"], "lang": code}
+        raise RuntimeError(f"неизвестный тип модели: {kind}")
+
+    # ---------- языковые пакеты ----------
+    def packs(self) -> list[dict]:
+        """Языковые пакеты: что есть, чего не хватает, сколько качать."""
+        if mreg is None:
+            return []
+        out = []
+        for pack in mreg.all_packs(self.src_lang):
+            models = []
+            missing = []
+            missing_mb = 0
+            for repo in pack["models"]:
+                inst = bool(mreg.installed(repo))
+                models.append({"id": repo, "installed": inst,
+                               "size_mb": mreg.MT_REPO_SIZE_MB})
+                if not inst:
+                    missing.append(repo)
+                    missing_mb += mreg.MT_REPO_SIZE_MB
+            asr_ok = bool(mreg.installed(mreg.ASR_MODELS[0]["repo"]))
+            tts_ok = bool(mreg.installed(mreg.TTS_MODELS[0]["repo"]))
+            ready = (not missing and asr_ok and tts_ok
+                     and pack["asr_supported"] and pack["tts_supported"])
+            no_route = (pack["to_user"]["kind"] == "none"
+                        or pack["from_user"]["kind"] == "none")
+            if not pack["asr_supported"] or not pack["tts_supported"] \
+                    or no_route:
+                status = "UNSUPPORTED"
+            elif ready:
+                status = "READY"
+            elif missing:
+                status = "PARTIAL" if (asr_ok and tts_ok) else "NOT INSTALLED"
+            else:
+                status = "PARTIAL"
+            out.append({**pack, "models": models, "missing": missing,
+                        "missing_mb": missing_mb, "asr_installed": asr_ok,
+                        "tts_installed": tts_ok, "status": status})
+        return out
+
+    def pack_install(self, code: str, request: str = "") -> bool:
+        pack = next((p for p in self.packs() if p["code"] == code), None)
+        if pack is None:
+            raise RuntimeError(f"нет языкового пакета: {code}")
+        if not pack["asr_supported"] or not pack["tts_supported"]:
+            raise RuntimeError(f"язык {code} не поддержан ASR/TTS")
+        missing = [m["id"] for m in pack["models"] if not m["installed"]]
+        if not missing:
+            emit({"event": "pack", "code": code, "state": "READY",
+                  "percent": 100})
+            return True
+        emit({"event": "pack", "code": code, "state": "DOWNLOADING",
+              "percent": 0, "models": missing,
+              "size_mb": pack["missing_mb"]})
+        ok = self.download_repos(missing, request or f"pack:{code}",
+                                label=f"пакет {code}")
+        state = "READY" if ok else "ERROR"
+        emit({"event": "pack", "code": code, "state": state,
+              "percent": 100 if ok else 0})
+        return ok
+
+    def pack_remove(self, code: str) -> dict:
+        pack = next((p for p in self.packs() if p["code"] == code), None)
+        if pack is None:
+            raise RuntimeError(f"нет языкового пакета: {code}")
+        # общие модели других пакетов не трогаем
+        others: set[str] = set()
+        for other in self.packs():
+            if other["code"] != code:
+                others.update(m["id"] for m in other["models"])
+        removed = []
+        freed = 0.0
+        for m in pack["models"]:
+            if not m["installed"] or m["id"] in others:
+                continue
+            res = self.remove_model(m["id"])
+            removed.append(m["id"])
+            freed += float(res.get("size_mb", 0) or 0)
+        emit({"event": "pack", "code": code, "state": "REMOVED",
+              "percent": 0, "removed": removed, "freed_mb": round(freed, 1)})
+        return {"removed": removed, "freed_mb": round(freed, 1)}
+
     def download_package(self, src: str) -> bool:
-        """Скачать веса перевода src->ru (только по настройке пользователя)."""
-        names = [_chain_name(i) for i in _reverse_mt_names(src)]
-        if not names:
+        """Скачать всё, что нужно для перевода src->ru (автозагрузка)."""
+        if mreg is None:
+            return False
+        repos = mreg.route(src, "ru") or []
+        if not repos:
             return False
         pair = f"{src}->ru"
         emit({"event": "package", "pair": pair, "state": "downloading",
-              "models": names})
-        log(f"[engine] скачивание пакета {pair}: {names}")
-        try:
-            from huggingface_hub import snapshot_download
-            for name in names:
-                snapshot_download(name)
-        except Exception as exc:  # noqa: BLE001
-            log(f"[engine] пакет {pair} не скачался: {exc}")
-            emit({"event": "package", "pair": pair, "state": "error",
-                  "message": f"{type(exc).__name__}: {exc}"})
-            return False
-        ok = self.reverse_available(src)
+              "models": repos})
+        log(f"[engine] загрузка пакета {pair}: {repos}")
+        ok = self.download_repos(repos, f"auto:{pair}", label=pair)
         self._downloaded.add(pair)
-        log(f"[engine] пакет {pair}: {'установлен' if ok else 'файлы не найдены'}")
         emit({"event": "package", "pair": pair,
               "state": "installed" if ok else "error"})
         return ok
@@ -492,12 +814,14 @@ class Engine:
         """Есть ли чем перевести чужую речь на русский (модели на диске)."""
         if src in ("", "auto", "ru"):
             return True
-        chain = _reverse_mt_names(src)
-        if chain and all(_model_installed(_chain_name(i)) for i in chain):
-            return True
-        # запасной путь: Whisper -> английский, затем en->ru
-        fb = _reverse_mt_names("en")
-        return bool(fb) and all(_model_installed(_chain_name(i)) for i in fb)
+        if mreg is None:
+            chain = _reverse_mt_names(src)
+            return bool(chain) and all(_model_installed(_chain_name(i))
+                                       for i in chain)
+        repos = mreg.route(src, "ru")
+        if not repos:
+            return False
+        return all(mreg.installed(r) for r in repos)
 
     # ---------- языки ----------
     def set_lang(self, code: str) -> str:
@@ -588,6 +912,8 @@ class Engine:
                 torch.cuda.ipc_collect()
         except Exception:
             pass
+        self.loaded = False
+        self._chain_repos.clear()
         log(f"[engine] модели выгружены (RSS={_rss_mb():.0f} МБ)")
 
     def _clear_mt_cache(self, keep: str = "") -> None:
@@ -609,12 +935,20 @@ class Engine:
         """
         return self._load_chain(f"chain:{code}", _mt_names(code))
 
-    def _mt_reverse(self, src: str) -> list[tuple]:
-        """Модели перевода язык -> русский (для чужих игроков)."""
-        names = _reverse_mt_names(src)
+    def _mt_reverse(self, src: str, dst: str = "ru") -> list[tuple]:
+        """Модели перевода язык -> язык пользователя (для чужих игроков).
+
+        Маршрут берётся из реестра: прямая пара, а если её нет — через
+        английский. Раньше английский подставлялся как замена перевода —
+        теперь это только язык-посредник.
+        """
+        if mreg is None:
+            names = _reverse_mt_names(src)
+        else:
+            names = mreg.route(src, dst) or []
         if not names:
             return []
-        return self._load_chain(f"rev:{src}", names)
+        return self._load_chain(f"rev:{src}:{dst}", names)
 
     def _load_chain(self, key: str, names: list) -> list[tuple]:
         """Загрузить (и закэшировать) цепочку моделей перевода.
@@ -677,6 +1011,7 @@ class Engine:
                     except Exception:
                         pass
         self._mt_cache[key] = chain
+        self._chain_repos[key] = plain_names
         self.mt_tok, self.mt = chain[0][0], chain[0][1]
         log(f"[engine] модель перевода {' -> '.join(plain_names)} загружена за "
             f"{int((time.time() - t0) * 1000)} мс, "
@@ -768,7 +1103,7 @@ class Engine:
         который требует исходного аудио: Whisper сам переводит речь
         на английский (task="translate"), дальше eng->ru одной моделью.
         """
-        if not text.strip() or src == "ru":
+        if not text.strip() or src in ("", "auto", "ru"):
             return text
         chain = self._mt_reverse(src)
         if not chain:
@@ -793,6 +1128,9 @@ class Engine:
         ru = self.translate_to_ru(text, src)
         if ru:
             return ru
+        if mreg is not None and (mreg.route(src, "ru") or []):
+            # маршрут есть, но модели не установлены — английским не подменяем
+            return ""
         # Прямой модели нет — переводим аудио на английский через Whisper
         en = self._transcribe_as_english(pcm_bytes, sr)
         if not en:
@@ -907,7 +1245,15 @@ class Engine:
         if code not in allowed:
             code = "auto"
         self.peer_lang = code
+        self._lang_hits.clear()
+        if code != "auto":
+            # ручной выбор сразу становится подтверждённым и не
+            # перезаписывается автоматикой
+            self.peer_lang_confirmed = code
         log(f"[engine] язык чужой речи: {self.peer_lang}")
+        emit({"event": "peer_lang", "code": self.peer_lang,
+              "auto": code == "auto", "prob": 0.0,
+              "confirmed": self.peer_lang_confirmed})
         return self.peer_lang
 
     def push_peer_pcm(self, pcm_bytes: bytes, sr: int = SR_ASR) -> bool:
@@ -947,7 +1293,8 @@ class Engine:
                         # сказать, что для направления нет модели.
                         log(f"[engine] перехват {lang}->ru: нет модели перевода")
                         emit({"event": "peer_text", "src": text, "ru": "",
-                              "lang": lang, "missing_mt": f"{lang}->ru"})
+                              "lang": lang, "missing_mt": f"{lang}->ru",
+                              "can_download": not self.auto_download})
                         continue
                 ru = self._translate_peer_to_ru(text, lang, pcm, sr)
                 emit({"event": "peer_text", "src": text, "ru": ru,
@@ -971,8 +1318,20 @@ class Engine:
         heard = norm(text)
         if not heard:
             return True
+        now = time.time()
         for own in self.last_spoken:
-            if difflib.SequenceMatcher(None, norm(own), heard).ratio() >= 0.55:
+            # Память об эхе короткая: своя озвучка возвращается через
+            # наушники в игру за секунды. Без ограничения по времени
+            # повтор собеседником той же фразы ошибочно считался своим
+            # голосом и терялся.
+            if isinstance(own, tuple):
+                own_text, own_ts = own
+            else:
+                own_text, own_ts = own, now
+            if now - own_ts > 8.0:
+                continue
+            if difflib.SequenceMatcher(None, norm(own_text),
+                                       heard).ratio() >= 0.55:
                 return True
         return False
 
@@ -1004,21 +1363,79 @@ class Engine:
         text = " ".join(s.text.strip() for s in speech).strip()
         if not text or is_hallucination(text):
             return "", self.peer_lang
-        detected = getattr(info, "language", None) or self.peer_lang
+        dur = audio.size / float(SR_ASR)
+        words = len(text.split())
+        detected = (getattr(info, "language", None) or "").lower()
         prob = float(getattr(info, "language_probability", 0.0) or 0.0)
-        if self.peer_lang == "auto":
-            log(f"[engine] язык собеседника: {detected}, "
-                f"уверенность {prob:.2f}")
-            # Одно короткое слово легко «опознать» неверно (испанская фраза
-            # на 3 с ушла в японский). При низкой уверенности фразу не
-            # переводим, а ждём следующую или ручного выбора.
-            if prob < PEER_LANG_MIN_CONF:
-                log(f"[engine] уверенность ниже {PEER_LANG_MIN_CONF:.2f} — "
-                    f"язык не применяю, фразу пропускаю")
-                return "", self.peer_lang
-        if detected == "auto":
-            detected = "es"
-        return text, detected
+        if self.peer_lang != "auto":
+            # Ручной выбор всегда приоритетнее автоматики.
+            self.peer_lang_confirmed = self.peer_lang
+            return text, self.peer_lang
+        accepted, reason = self._detect_peer_lang(detected, prob, dur, words)
+        if not accepted:
+            log(f"[engine] язык собеседника не подтверждён ({reason}) — "
+                f"фразу не перевожу")
+            return "", self.peer_lang
+        lang = self.peer_lang_confirmed or detected
+        self._peer_lang_prob = prob
+        return text, lang
+
+    def _detect_peer_lang(self, detected: str, prob: float, dur: float,
+                          words: int) -> tuple[bool, str]:
+        """Подтвердить язык собеседника (режим auto).
+
+        Не переключаемся по одному короткому слову и по неуверенному
+        определению: нужны фраза достаточной длины, уверенность не ниже
+        PEER_LANG_MIN_CONF и (для смены языка) второе совпадение в течение
+        2 минут. Последний подтверждённый язык сохраняется.
+        """
+        now = time.time()
+        self._lang_hits = [(c, t) for (c, t) in self._lang_hits
+                           if now - t < 120]
+        payload = {"detected": detected, "prob": round(prob, 2),
+                   "confirmed": self.peer_lang_confirmed,
+                   "duration": round(dur, 2), "words": words}
+
+        def reject(reason: str) -> tuple[bool, str]:
+            log(f"[engine] язык: {detected} ({prob:.2f}, {dur:.2f}с, "
+                f"{words} слов) — {reason}")
+            emit({"event": "peer_lang_detected", **payload,
+                  "accepted": False, "reason": reason})
+            return False, reason
+
+        if not detected or detected == "auto":
+            return reject("язык не определён")
+        if dur < self._peer_lang_min_sec:
+            return reject(f"короткий фрагмент ({dur:.1f} < "
+                          f"{self._peer_lang_min_sec:.1f} с)")
+        if words < self._peer_lang_min_words:
+            return reject("слишком мало слов для уверенного определения")
+        if prob < PEER_LANG_MIN_CONF:
+            return reject(f"низкая уверенность ({prob:.2f} < "
+                          f"{PEER_LANG_MIN_CONF:.2f})")
+        if detected == self.peer_lang_confirmed:
+            emit({"event": "peer_lang_detected", **payload,
+                  "accepted": True, "reason": "язык подтверждён"})
+            return True, "ok"
+
+        hits = [c for (c, _t) in self._lang_hits if c == detected]
+        self._lang_hits.append((detected, now))
+        switched = bool(self.peer_lang_confirmed)
+        if switched and not hits:
+            emit({"event": "peer_lang_detected", **payload, "accepted": False,
+                  "reason": "смена языка не подтверждена (1 из 2)"})
+            log(f"[engine] возможная смена языка на {detected}, ждём "
+                f"подтверждения")
+            return False, "смена языка не подтверждена"
+        self.peer_lang_confirmed = detected
+        self._peer_lang_prob = prob
+        log(f"[engine] язык собеседника подтверждён: {detected} "
+            f"({prob:.2f}), маршрут -> ru")
+        emit({"event": "peer_lang", "code": detected, "auto": True,
+              "prob": round(prob, 2), "switched": switched})
+        emit({"event": "peer_lang_detected", **payload, "accepted": True,
+              "reason": "язык подтверждён"})
+        return True, "ok"
 
     # ---------- проверка синтеза ----------
     def verify(self, audio: np.ndarray, expected: str) -> float:
@@ -1070,7 +1487,8 @@ class Engine:
         emit({"event": "incoming_chunk", "seq": seq,
               "pcm": base64.b64encode(pcm.tobytes()).decode("ascii")})
 
-    def _synth_full(self, spoken: str, params: dict, seed: int) -> np.ndarray:
+    def _synth_full(self, spoken: str, params: dict, seed: int,
+                    lang: str | None = None) -> np.ndarray:
         """Синтезировать фразу целиком (numpy float32)."""
         try:
             import torch
@@ -1078,8 +1496,9 @@ class Engine:
         except Exception:
             pass
         chunks = self.tts.inference_stream(
-            spoken, xtts_language(self.lang), self.gpt_latent, self.spk_emb,
-            stream_chunk_size=STREAM_CHUNK, overlap_wav_len=2048, **params)
+            spoken, xtts_language(lang or self.lang), self.gpt_latent,
+            self.spk_emb, stream_chunk_size=STREAM_CHUNK,
+            overlap_wav_len=2048, **params)
         parts = [c.detach().cpu().numpy() for c in chunks]
         if not parts:
             return np.zeros(0, dtype=np.float32)
@@ -1103,7 +1522,8 @@ class Engine:
         """Всегда False: Piper удалён вместе с мегрельским."""
         return False
 
-    def speak(self, text: str, seq: int = 0, ru: str = "") -> None:
+    def speak(self, text: str, seq: int = 0, ru: str = "",
+              lang: str | None = None) -> None:
         """Синтезировать перевод своим голосом, отдавая чанки.
 
         Для языков, которых нет в XTTS (например, мегрельский), используется
@@ -1139,6 +1559,9 @@ class Engine:
                   "ms": int((time.time() - t0) * 1000)})
             return
 
+        # язык синтеза: по умолчанию язык перевода, но можно озвучить
+        # текст и на другом языке XTTS (предпрослушивание голоса)
+        tts_code = lang or self.lang
         tone, params = _tone_params(text, ru, self.liveliness)
         try:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1154,8 +1577,8 @@ class Engine:
             f"temp={params['temperature']}, speed={params['speed']}")
         # Запоминаем, что сказали сами: по этому отсекаем собственный голос
         # в перехвате (перевод идёт и в наушники, и в запись игры).
-        self.last_spoken.append(spoken)
-        del self.last_spoken[:-3]
+        self.last_spoken.append((spoken, time.time()))
+        del self.last_spoken[:-5]
 
         short = len(text.split()) <= 6
 
@@ -1168,7 +1591,7 @@ class Engine:
                 seed = (abs(hash(spoken)) % 100000) + self._seed_counter * 7919
                 torch.manual_seed(seed)
                 for c in self.tts.inference_stream(
-                        spoken, xtts_language(self.lang), self.gpt_latent,
+                        spoken, xtts_language(tts_code), self.gpt_latent,
                         self.spk_emb, stream_chunk_size=STREAM_CHUNK,
                         overlap_wav_len=2048, **params):
                     self._emit_chunk(c.detach().cpu().numpy(), seq)
@@ -1181,7 +1604,8 @@ class Engine:
         # короткая фраза: синтезируем целиком, проверяем, обрабатываем
         audio = np.zeros(0, dtype=np.float32)
         for attempt in range(2):
-            audio = self._synth_full(spoken, params, 1234 + attempt * 7919)
+            audio = self._synth_full(spoken, params, 1234 + attempt * 7919,
+                                     lang=tts_code)
             if audio.size == 0:
                 break
             score = self.verify(audio, text)
@@ -1233,8 +1657,8 @@ class Engine:
         не захватил свой синтезированный перевод (защита от аудиопетель).
         """
         # Запоминаем, что синтезируем — для защиты от аудиопетель
-        self.last_spoken.append(text)
-        del self.last_spoken[:-3]
+        self.last_spoken.append((text, time.time()))
+        del self.last_spoken[:-5]
         t0 = time.time()
         try:
             import torch
@@ -1269,6 +1693,7 @@ def main() -> None:
     for arg in sys.argv[1:]:
         if arg.startswith("--reference="):
             reference = arg.split("=", 1)[1]
+    engine.reference = reference
 
     # Свой лог: в EXE консоли нет, а stderr может не доехать
     try:
@@ -1303,7 +1728,8 @@ def main() -> None:
                 emit({"event": "ready", "load_ms": int((time.time() - t0) * 1000),
                       "asr_ms": engine.load_ms})
             elif cmd == "speak":
-                engine.speak(msg.get("text", ""), msg.get("seq", 0))
+                engine.speak(msg.get("text", ""), msg.get("seq", 0),
+                             lang=msg.get("lang"))
             elif cmd == "lang":
                 # язык перевода: es / en / ow (олдвест) / it
                 code = engine.set_lang(msg.get("code", "es"))
@@ -1326,6 +1752,57 @@ def main() -> None:
             elif cmd == "models":
                 # что реально установлено (ASR/TTS/MT) — для интерфейса
                 emit({"event": "models", **engine.models_info()})
+            elif cmd == "catalog":
+                # каталог моделей с состоянием установки/загрузки
+                emit({"event": "catalog", "models": engine.catalog(),
+                      "loaded": engine.loaded})
+            elif cmd == "model_download":
+                repos = [r for r in (msg.get("models")
+                                     or [msg.get("id", "")]) if r]
+                req = msg.get("request") or msg.get("id") or ",".join(repos)
+                threading.Thread(
+                    target=engine.download_repos,
+                    args=(repos, req, msg.get("label", "")),
+                    daemon=True).start()
+            elif cmd == "model_cancel":
+                engine.cancel_download(msg.get("request", ""))
+            elif cmd == "model_remove":
+                res = engine.remove_model(msg.get("id", ""))
+                emit({"event": "model_removed", **res})
+            elif cmd == "model_verify":
+                res = engine.verify_repo(msg.get("id", ""))
+                emit({"event": "verify", **res})
+            elif cmd == "model_select":
+                res = engine.select_model(msg.get("kind", ""),
+                                          msg.get("id", ""))
+                emit({"event": "model_selected", **res})
+            elif cmd == "packs":
+                emit({"event": "packs", "packs": engine.packs(),
+                      "user_lang": engine.src_lang})
+            elif cmd == "pack_install":
+                threading.Thread(
+                    target=engine.pack_install,
+                    args=(msg.get("code", ""), msg.get("request", "")),
+                    daemon=True).start()
+            elif cmd == "pack_remove":
+                engine.pack_remove(msg.get("code", ""))
+            elif cmd == "pack_verify":
+                code = msg.get("code", "")
+                pack = next((p for p in engine.packs()
+                             if p["code"] == code), None)
+                bad = []
+                for m in (pack or {}).get("models", []):
+                    chk = engine.verify_repo(m["id"])
+                    if not chk["ok"]:
+                        bad.append({"id": m["id"], "missing": chk["missing"]})
+                emit({"event": "pack_verify", "code": code,
+                      "ok": not bad, "problems": bad})
+            elif cmd == "models_load":
+                engine.load(engine.reference or reference)
+                emit({"event": "ready", "asr_ms": engine.load_ms})
+            elif cmd == "models_unload":
+                engine.unload_models()
+                emit({"event": "unloaded", "rss_mb": round(_rss_mb(), 1)})
             elif cmd == "set_asr":
                 # переключение модели распознавания (только установленной)
                 name = engine.set_asr(msg.get("name", ""))

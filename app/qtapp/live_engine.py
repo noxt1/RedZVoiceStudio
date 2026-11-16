@@ -63,6 +63,11 @@ class LiveEngine(QObject):
     modelsChanged = Signal()                 # установленные модели ASR/TTS/MT
     autoDownloadChanged = Signal()
     packageChanged = Signal()                # статус загрузки языкового пакета
+    catalogChanged = Signal()                # каталог моделей
+    packsChanged = Signal()                  # языковые пакеты
+    downloadsChanged = Signal()              # прогресс загрузок
+    modelsLoadedChanged = Signal()           # модели в памяти движка
+    peerLangInfoChanged = Signal()           # определённый язык собеседника
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -162,6 +167,14 @@ class LiveEngine(QObject):
         # автоскачивание языковых пакетов (по умолчанию ВЫКЛЮЧЕНО)
         self._auto_download = False
         self._package_status = ""
+        # Model Manager / языковые пакеты
+        self._catalog: list = []
+        self._packs: list = []
+        self._downloads: dict = {}
+        self._models_loaded = False
+        self._peer_confirmed = ""
+        self._peer_prob = 0.0
+        self._peer_reason = ""
         # последние реплики для показа оригинала и перевода
         self._last_out: tuple[str, str] = ("", "")
         self._last_in: tuple[str, str] = ("", "")
@@ -229,6 +242,102 @@ class LiveEngine(QObject):
     @Property(str, notify=packageChanged)
     def packageStatus(self) -> str:
         return self._package_status
+
+    # ---------- Model Manager ----------
+    @Property("QVariantList", notify=catalogChanged)
+    def catalog(self):
+        """Каталог моделей: метаданные + состояние установки."""
+        return self._catalog
+
+    @Property("QVariantList", notify=packsChanged)
+    def packs(self):
+        """Языковые пакеты: что установлено, чего не хватает."""
+        return self._packs
+
+    @Property("QVariantMap", notify=downloadsChanged)
+    def downloads(self):
+        """Текущие загрузки: id модели -> {state, percent, label, message}."""
+        return self._downloads
+
+    @Property(bool, notify=modelsLoadedChanged)
+    def modelsLoaded(self) -> bool:
+        """Загружены ли модели в память движка."""
+        return self._models_loaded
+
+    @Property(str, notify=peerLangInfoChanged)
+    def peerLangConfirmed(self) -> str:
+        """Подтверждённый язык собеседника (режим auto)."""
+        return self._peer_confirmed
+
+    @Property(float, notify=peerLangInfoChanged)
+    def peerLangProb(self) -> float:
+        return float(self._peer_prob)
+
+    @Property(str, notify=peerLangInfoChanged)
+    def peerLangReason(self) -> str:
+        return self._peer_reason
+
+    def _send_cmd(self, payload: dict) -> bool:
+        if self._translator is None:
+            self.errorMessage.emit("движок не запущен — включи его в Настройках")
+            return False
+        return bool(self._translator.send(payload))
+
+    @Slot()
+    def requestCatalog(self) -> None:
+        self._send_cmd({"cmd": "catalog"})
+
+    @Slot()
+    def requestPacks(self) -> None:
+        self._send_cmd({"cmd": "packs"})
+
+    @Slot(str)
+    def downloadModel(self, model_id: str) -> None:
+        if model_id:
+            self._send_cmd({"cmd": "model_download", "id": model_id,
+                            "request": model_id})
+
+    @Slot(str)
+    def cancelDownload(self, request: str) -> None:
+        self._send_cmd({"cmd": "model_cancel", "request": request})
+
+    @Slot(str)
+    def removeModel(self, model_id: str) -> None:
+        if model_id:
+            self._send_cmd({"cmd": "model_remove", "id": model_id})
+
+    @Slot(str)
+    def verifyModel(self, model_id: str) -> None:
+        if model_id:
+            self._send_cmd({"cmd": "model_verify", "id": model_id})
+
+    @Slot(str, str)
+    def selectModel(self, kind: str, model_id: str) -> None:
+        self._send_cmd({"cmd": "model_select", "kind": kind, "id": model_id})
+
+    @Slot()
+    def loadModels(self) -> None:
+        self._send_cmd({"cmd": "models_load"})
+
+    @Slot()
+    def unloadModels(self) -> None:
+        self._send_cmd({"cmd": "models_unload"})
+
+    @Slot(str)
+    def installPack(self, code: str) -> None:
+        if code:
+            self._send_cmd({"cmd": "pack_install", "code": code,
+                            "request": "pack:" + code})
+
+    @Slot(str)
+    def removePack(self, code: str) -> None:
+        if code:
+            self._send_cmd({"cmd": "pack_remove", "code": code})
+
+    @Slot(str)
+    def verifyPack(self, code: str) -> None:
+        if code:
+            self._send_cmd({"cmd": "pack_verify", "code": code})
 
     @Slot(bool)
     def setAutoDownload(self, on: bool) -> None:
@@ -1283,6 +1392,61 @@ class LiveEngine(QObject):
         elif kind == "auto_download":
             self._auto_download = bool(data.get("on"))
             self.autoDownloadChanged.emit()
+        elif kind == "catalog":
+            self._apply_catalog(data)
+        elif kind == "download":
+            self._apply_download(data)
+        elif kind == "verify":
+            ok = bool(data.get("ok"))
+            name = str(data.get("id", "") or "")
+            if ok:
+                self.logLine.emit(f"целостность {name}: ok "
+                                  f"({data.get('size_mb', 0)} МБ)")
+            else:
+                self.errorMessage.emit(
+                    f"проверка {name}: " + "; ".join(data.get("missing") or []))
+        elif kind == "model_removed":
+            self.logLine.emit(f"модель удалена: {data.get('id')} "
+                              f"({data.get('size_mb', 0)} МБ)")
+            self.requestCatalog()
+            self.requestPacks()
+        elif kind == "model_selected":
+            self.logLine.emit(f"выбрана модель {data.get('kind')}: "
+                              f"{data.get('value')}")
+            self.requestModels()
+            self.requestCatalog()
+        elif kind == "packs":
+            self._packs = list(data.get("packs") or [])
+            self.packsChanged.emit()
+        elif kind == "pack":
+            self._apply_pack(data)
+        elif kind == "pack_verify":
+            code = str(data.get("code", "") or "")
+            if data.get("ok"):
+                self.logLine.emit(f"пакет {code}: целостность ok")
+            else:
+                self.errorMessage.emit(
+                    f"пакет {code}: проблемы — "
+                    + "; ".join(p.get("id", "") for p in
+                                 (data.get("problems") or [])))
+        elif kind == "peer_lang":
+            code = str(data.get("code", "") or "")
+            if code and code != "auto":
+                self._peer_lang = code
+            else:
+                self._peer_confirmed = str(
+                    data.get("confirmed", self._peer_confirmed) or "")
+            self._peer_prob = float(data.get("prob", 0.0) or 0.0)
+            self.peerLangChanged.emit()
+            self.peerLangInfoChanged.emit()
+        elif kind == "peer_lang_detected":
+            self._peer_confirmed = str(data.get("confirmed", "") or "")
+            self._peer_prob = float(data.get("prob", 0.0) or 0.0)
+            self._peer_reason = str(data.get("reason", "") or "")
+            self.peerLangInfoChanged.emit()
+        elif kind == "unloaded":
+            self._models_loaded = False
+            self.modelsLoadedChanged.emit()
         elif kind == "src_lang":
             code = str(data.get("code", "") or "")
             if code:
@@ -1303,7 +1467,11 @@ class LiveEngine(QObject):
         elif kind == "lang":
             pass
         elif kind == "log":
-            self.logLine.emit(str(data))
+            text = str(data)
+            # технические эхо-строки движка не показываем тостами
+            if text.startswith("[engine] команда:"):
+                return
+            self.logLine.emit(text)
         elif kind == "error":
             self._set_state("ERROR", str(data))
 
@@ -1326,6 +1494,61 @@ class LiveEngine(QObject):
             self._translator.set_asr_model(self._asr_model)
         # какие модели реально установлены — для экрана настроек
         self._translator.request_models()
+
+    def _apply_catalog(self, data) -> None:
+        self._catalog = [m for m in (data.get("models") or [])
+                         if isinstance(m, dict)]
+        self._models_loaded = bool(data.get("loaded"))
+        self.catalogChanged.emit()
+        self.modelsLoadedChanged.emit()
+
+    def _apply_download(self, data) -> None:
+        model_id = str(data.get("id", "") or "")
+        request = str(data.get("request", "") or model_id)
+        state = str(data.get("state", "") or "")
+        self._downloads[model_id] = {
+            "id": model_id, "request": request, "state": state,
+            "percent": int(data.get("percent", 0) or 0),
+            "mb": float(data.get("mb", 0) or 0),
+            "expected_mb": float(data.get("expected_mb", 0) or 0),
+            "label": str(data.get("label", "") or ""),
+            "message": str(data.get("message", "") or ""),
+        }
+        self.downloadsChanged.emit()
+        if state in ("READY", "ERROR", "CANCELLED"):
+            if state == "READY":
+                self.logLine.emit(f"модель установлена: {model_id}")
+                self.requestCatalog()
+                self.requestPacks()
+            elif state == "ERROR":
+                self.errorMessage.emit(
+                    f"загрузка {model_id}: {self._downloads[model_id]['message']}")
+            else:
+                self.logLine.emit(f"загрузка {model_id} отменена")
+            self._downloads.pop(model_id, None)
+            self.downloadsChanged.emit()
+
+    def _apply_pack(self, data) -> None:
+        code = str(data.get("code", "") or "")
+        state = str(data.get("state", "") or "")
+        msg = str(data.get("message", "") or "")
+        if state in ("DOWNLOADING", "INSTALLING"):
+            self._package_status = f"пакет {code}: {state.lower()}…"
+        elif state == "READY":
+            self._package_status = f"пакет {code} готов"
+            self.logLine.emit(self._package_status)
+            self.requestPacks()
+            self.requestCatalog()
+            self.requestModels()
+        elif state == "REMOVED":
+            self._package_status = f"пакет {code} удалён"
+            self.logLine.emit(self._package_status)
+            self.requestPacks()
+            self.requestCatalog()
+        else:
+            self._package_status = f"пакет {code}: ошибка {msg}".strip()
+            self.errorMessage.emit(self._package_status)
+        self.packageChanged.emit()
 
     def _apply_models(self, data) -> None:
         """Сохранить ответ движка о моделях и обновить UI."""
