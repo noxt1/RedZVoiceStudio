@@ -69,7 +69,7 @@ redz_mx_soundboard/
 │   ├── ui/                  # Legacy Tk-интерфейс (3 и 6 вкладок)
 │   └── redz_voice_studio.spec  # PyInstaller onefile
 ├── tools/                   # CLI: движок перевода, озвучка, проверки, сборка
-├── tests/                   # unittest (62 теста)
+├── tests/                   # unittest (127 тестов)
 ├── voices/ player/ html/ sounds/ out/   # ресурсы озвучки и плеера
 ├── lines.json               # 33 фразы: es/ru/en/ow/it, категории, клавиши
 ├── dist/RedZVoiceStudio.exe # собранное приложение (onefile)
