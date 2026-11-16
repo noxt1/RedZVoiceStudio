@@ -119,6 +119,10 @@ class AppState(QObject):
         self._outgoing_on = bool(cfg.get("outgoing_on", True))
         # автоскачивание языковых пакетов — по умолчанию ВЫКЛЮЧЕНО
         self._auto_download = bool(cfg.get("auto_download", False))
+        # режим работы моделей: fast / balanced / quality / manual
+        mode = str(cfg.get("mode", "balanced") or "balanced")
+        self._mode = mode if mode in ("fast", "balanced", "quality", "manual") \
+            else "balanced"
         # языки: источник (язык пользователя), вывод (ru -> X) и язык собеседника
         self._src_lang = str(cfg.get("src_lang", "ru"))
         self._target_lang = str(cfg.get("target_lang", "es"))
@@ -248,6 +252,26 @@ class AppState(QObject):
     def outgoingOn(self) -> bool:
         """Исходящий перевод (речь пользователя) включён."""
         return self._outgoing_on
+
+    @Property(str, notify=settingsChanged)
+    def mode(self) -> str:
+        """Режим работы моделей (fast/balanced/quality/manual)."""
+        return self._mode
+
+    @Slot(str)
+    def setMode(self, code: str) -> None:
+        code = (code or "").strip().lower()
+        if code not in ("fast", "balanced", "quality", "manual"):
+            return
+        self._mode = code
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.setMode(code)
+            except Exception:
+                pass
+        self._save_settings()
+        self.settingsChanged.emit()
 
     @Property(bool, notify=settingsChanged)
     def autoDownload(self) -> bool:
@@ -824,6 +848,7 @@ class AppState(QObject):
                     "voice_volume": self._voice_volume,
                     "outgoing_on": self._outgoing_on,
                     "auto_download": self._auto_download,
+                    "mode": self._mode,
                     "src_lang": self._src_lang,
                     "incoming_on": self._incoming_on,
                     "incoming_volume": self._incoming_volume,

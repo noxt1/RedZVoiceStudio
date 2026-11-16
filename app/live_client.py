@@ -48,6 +48,9 @@ class LiveTranslator:
         self._lines: queue.Queue[str] = queue.Queue()
         self._reader: threading.Thread | None = None
         self._stopping = False      # stop() закрыл поток штатно
+        # Поколение процесса: строка от старого процесса (его EOF после
+        # перезапуска) не должна опрокидывать НОВЫЙ движок в ERROR.
+        self._proc_gen = 0
         self.last_send_error = ""   # последняя ошибка записи в stdin движка
         # RLock, а не Lock: _send() берёт его изнутри translate_pcm()
         self._lock = threading.RLock()
@@ -112,15 +115,20 @@ class LiveTranslator:
             try:
                 import ctypes
                 BELOW_NORMAL = 0x00004000
-                handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)
+                handle = ctypes.windll.kernel32.OpenProcess(
+                    0x1F0FFF, False, self.proc.pid)
                 if handle:
                     ctypes.windll.kernel32.SetPriorityClass(handle, BELOW_NORMAL)
                     ctypes.windll.kernel32.CloseHandle(handle)
             except Exception:
                 pass
-            self._reader = threading.Thread(target=self._read_loop, daemon=True)
+            self._proc_gen += 1
+            gen = self._proc_gen
+            self._reader = threading.Thread(target=self._read_loop,
+                                            args=(gen,), daemon=True)
             self._reader.start()
-            threading.Thread(target=self._read_err, daemon=True).start()
+            threading.Thread(target=self._read_err, args=(gen,),
+                             daemon=True).start()
             self._diag_log(f"[gui] запуск: {self.engine_python} {self.script}")
             self._send({"cmd": "load"})
             self.loading = True
@@ -138,18 +146,18 @@ class LiveTranslator:
         except Exception:
             pass
 
-    def _read_loop(self) -> None:
+    def _read_loop(self, gen: int = 0) -> None:
         assert self.proc and self.proc.stdout
         for line in self.proc.stdout:
             text = line.rstrip()
             # чанки аудио большие — в лог не пишем, но очередь получают целиком
             if not text.startswith('{"event":"chunk"'):
                 self._diag_log(f"[engine>] {text[:300]}")
-            self._lines.put(text)
+            self._lines.put((gen, text))
         self._diag_log("[engine] поток вывода закрыт")
-        self._lines.put("")  # признак конца потока
+        self._lines.put((gen, ""))  # признак конца потока
 
-    def _read_err(self) -> None:
+    def _read_err(self, gen: int = 0) -> None:
         assert self.proc and self.proc.stderr
         # stderr движка пишем в ОТДЕЛЬНЫЙ файл: сам движок уже ведёт
         # свой лог (live_engine.log), иначе строки дублируются
@@ -195,9 +203,12 @@ class LiveTranslator:
         """Разобрать пришедшие строки. Вызывается из GUI-потока."""
         while True:
             try:
-                line = self._lines.get_nowait()
+                gen, line = self._lines.get_nowait()
             except queue.Empty:
                 return
+            if gen != self._proc_gen:
+                # остаток вывода старого процесса — не наш, игнорируем
+                continue
             if not line:
                 if self._stopping:
                     # поток уже закрыт штатно (stop()) — не повторяем ошибку
@@ -245,7 +256,8 @@ class LiveTranslator:
                 self.on_event("auto_download", msg)
             elif kind in ("catalog", "download", "verify", "model_removed",
                           "model_selected", "packs", "pack", "pack_verify",
-                          "peer_lang", "peer_lang_detected", "unloaded"):
+                          "peer_lang", "peer_lang_detected", "unloaded",
+                          "mode", "peer_partial", "metrics", "stats"):
                 # управление моделями и языковые пакеты
                 self.on_event(kind, msg)
             elif kind == "src_lang":
@@ -319,7 +331,15 @@ class LiveTranslator:
         except Exception:
             return False
 
-    def send_peer_pcm(self, pcm, sr: int = 16000) -> bool:
+    def set_mode(self, code: str) -> bool:
+        """Режим работы движка: fast / balanced / quality / manual."""
+        if not self.ready:
+            return False
+        self._send({"cmd": "mode", "code": str(code)})
+        return True
+
+    def send_peer_pcm(self, pcm, sr: int = 16000,
+                      partial: bool = False) -> bool:
         """Отдать фрагмент звука игры на разбор речи игроков.
 
         Принимает И bytes int16 (так отдаёт wasapi_loopback), И float32-массив.
@@ -336,8 +356,11 @@ class LiveTranslator:
                 data = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
             if data.size == 0:
                 return False
-            self._send({"cmd": "peer", "sr": int(sr),
-                        "pcm": base64.b64encode(data.tobytes()).decode("ascii")})
+            msg = {"cmd": "peer", "sr": int(sr),
+                   "pcm": base64.b64encode(data.tobytes()).decode("ascii")}
+            if partial:
+                msg["partial"] = True
+            self._send(msg)
             return True
         except Exception as exc:  # noqa: BLE001
             self.last_send_error = str(exc)

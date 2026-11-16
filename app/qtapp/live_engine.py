@@ -68,6 +68,9 @@ class LiveEngine(QObject):
     downloadsChanged = Signal()              # прогресс загрузок
     modelsLoadedChanged = Signal()           # модели в памяти движка
     peerLangInfoChanged = Signal()           # определённый язык собеседника
+    modeChanged = Signal()                   # режим fast/balanced/quality/manual
+    peerPartialChanged = Signal()            # промежуточное распознавание
+    metricsChanged = Signal()                # метрики последней реплики
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -175,6 +178,16 @@ class LiveEngine(QObject):
         self._peer_confirmed = ""
         self._peer_prob = 0.0
         self._peer_reason = ""
+        self._mode = "balanced"
+        self._mode_info = ""
+        self._peer_partial = ""
+        self._metrics: dict = {}
+        self._dropped = 0
+        self._cancelled = 0
+        # накопление для промежуточного распознавания
+        self._peer_acc = 0.0
+        self._peer_partial_acc = 0.0
+        self._peer_partial_t = 0.0
         # последние реплики для показа оригинала и перевода
         self._last_out: tuple[str, str] = ("", "")
         self._last_in: tuple[str, str] = ("", "")
@@ -276,6 +289,39 @@ class LiveEngine(QObject):
     @Property(str, notify=peerLangInfoChanged)
     def peerLangReason(self) -> str:
         return self._peer_reason
+
+    @Property(str, notify=modeChanged)
+    def mode(self) -> str:
+        """Режим работы: fast / balanced / quality / manual."""
+        return self._mode
+
+    @Property(str, notify=modeChanged)
+    def modeInfo(self) -> str:
+        """Фактические параметры режима (что реально применяется)."""
+        return self._mode_info
+
+    @Property(str, notify=peerPartialChanged)
+    def peerPartial(self) -> str:
+        """Промежуточное распознавание (только показ, без перевода)."""
+        return self._peer_partial
+
+    @Property("QVariantMap", notify=metricsChanged)
+    def lastMetrics(self):
+        return self._metrics
+
+    @Slot(str)
+    def setMode(self, code: str) -> None:
+        code = (code or "").strip().lower()
+        if code not in ("fast", "balanced", "quality", "manual"):
+            return
+        self._mode = code
+        if self._translator is not None and self._translator.ready:
+            try:
+                self._translator.set_mode(code)
+            except Exception:
+                pass
+        self.modeChanged.emit()
+        self.logLine.emit(f"режим: {code}")
 
     def _send_cmd(self, payload: dict) -> bool:
         if self._translator is None:
@@ -466,6 +512,7 @@ class LiveEngine(QObject):
             self._liveliness = int(getattr(state_obj, "liveliness", self._liveliness))
             self._outgoing_on = bool(getattr(state_obj, "outgoingOn", True))
             self._auto_download = bool(getattr(state_obj, "autoDownload", False))
+            self._mode = str(getattr(state_obj, "mode", self._mode))
             self._src_lang = str(getattr(state_obj, "srcLang", "ru") or "ru")
         except Exception:
             pass
@@ -571,6 +618,11 @@ class LiveEngine(QObject):
 
     @Slot(str)
     def setPeerLang(self, code: str) -> None:
+        # generation guard на стороне UI: старый перевод не должен
+        # доигрываться после смены языка собеседника
+        self._clear_play()
+        self._peer_partial = ""
+        self.peerPartialChanged.emit()
         self._peer_lang = code
         if self._translator is not None and self._translator.ready:
             self._translator.set_peer_lang(code)
@@ -873,6 +925,11 @@ class LiveEngine(QObject):
         if self._translator is None or not self._translator.ready:
             return
         with self._queue_lock:
+            # Очередь исходящего ограничена: при перегрузке теряем САМУЮ
+            # старую фразу, а не копим задержку до неприемлемой.
+            if len(self._queue) >= 3:
+                self._queue.pop(0)
+                self._dropped += 1
             self._queue.append((pcm, sr))
         self._pump_queue()
 
@@ -1108,6 +1165,16 @@ class LiveEngine(QObject):
         db = 20.0 * float(np.log10(max(rms, 1e-6)))
         lvl = max(0.0, min(1.0, (db + 55.0) / 55.0))
         self._peer_level = max(lvl, self._peer_level * 0.6)
+        self._peer_acc += block_sec
+        # Промежуточное распознавание раз в ~0.9 с речи: показываем текст,
+        # но не переводим и не озвучиваем его.
+        import time as _t
+        if (self._peer_speech and self._incoming_on
+                and self._peer_acc - self._peer_partial_acc >= 0.9
+                and _t.time() - self._peer_partial_t >= 0.7):
+            self._peer_partial_acc = self._peer_acc
+            self._peer_partial_t = _t.time()
+            self._send_peer_partial()
         if self._peer_silence >= PEER_SILENCE_END and self._peer_speech:
             self._flush_peer_segment()
         elif len(self._peer_buf) * block_sec >= PEER_MAX_SEG:
@@ -1123,6 +1190,10 @@ class LiveEngine(QObject):
         self._peer_speech = False
         self._peer_strong = 0
         self._peer_silence = 0.0
+        self._peer_acc = 0.0
+        self._peer_partial_acc = 0.0
+        self._peer_partial = ""
+        self.peerPartialChanged.emit()
         tr = self._translator
         if not buf or not had_speech or strong < 3:
             return
@@ -1156,6 +1227,25 @@ class LiveEngine(QObject):
                 self.errorMessage.emit(f"движок не принял звук: {err}")
         elif err:
             self.errorMessage.emit(f"движок не принял звук собеседника: {err}")
+
+    def _send_peer_partial(self) -> None:
+        """Отправить движку срез ещё не законченной реплики (только показ)."""
+        tr = self._translator
+        if tr is None or not tr.ready or not self._peer_buf:
+            return
+        try:
+            audio = np.concatenate(self._peer_buf)
+        except Exception:
+            return
+        # не больше 12 секунд: промежуточный срез нужен только для показа
+        max_len = int(12.0 * self._peer_sr)
+        if len(audio) > max_len:
+            audio = audio[-max_len:]
+        pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+        try:
+            tr.send_peer_pcm(pcm, self._peer_sr, partial=True)
+        except Exception:
+            pass
 
     def _incoming_gate_closed(self) -> bool:
         """Идёт воспроизведение нашего перевода — захват молчит."""
@@ -1351,6 +1441,8 @@ class LiveEngine(QObject):
             ru = str(data.get("ru", "") or "")
             missing = str(data.get("missing_mt", "") or "")
             # (язык, перевод, оригинал) — история показывает оба текста
+            self._peer_partial = ""
+            self.peerPartialChanged.emit()
             self.peerTextReady.emit(src_lang, ru, original)
             if original or ru:
                 self._last_in = (original, ru)
@@ -1363,6 +1455,15 @@ class LiveEngine(QObject):
             if ru and self._incoming_on:
                 self._speak_incoming(ru)
         elif kind == "incoming_chunk":
+            # generation guard: старый синтез не должен попасть в новую
+            # реплику (например, после смены языка или остановки)
+            try:
+                seq = int(data.get("seq", self._incoming_seq))
+            except Exception:
+                seq = self._incoming_seq
+            if seq != self._incoming_seq:
+                self._cancelled += 1
+                return
             try:
                 pcm = lc.pcm_to_float16(base64.b64decode(data["pcm"]))
                 self._emit_incoming_audio(pcm)
@@ -1447,6 +1548,34 @@ class LiveEngine(QObject):
         elif kind == "unloaded":
             self._models_loaded = False
             self.modelsLoadedChanged.emit()
+        elif kind == "mode":
+            self._apply_mode(data)
+        elif kind == "peer_partial":
+            text = str(data.get("text", "") or "").strip()
+            self._peer_partial = text
+            self.peerPartialChanged.emit()
+        elif kind == "metrics":
+            self._apply_metrics(data)
+        elif kind == "stats":
+            # диагностика: RAM/VRAM/очереди — показываем и пишем в лог
+            info = {k: data.get(k) for k in
+                    ("rss_mb", "vram_mb", "dropped", "cancelled")}
+            queues = data.get("queues") or {}
+            info["queue"] = queues.get("peer", 0)
+            self._metrics = {**self._metrics, **info}
+            self.metricsChanged.emit()
+            try:
+                import json
+                import time
+                logs = os.path.join(sp.workspace(), "logs")
+                os.makedirs(logs, exist_ok=True)
+                with open(os.path.join(logs, "diagnostics.log"), "a",
+                          encoding="utf-8") as fh:
+                    fh.write(json.dumps({"ts": time.strftime(
+                        "%Y-%m-%d %H:%M:%S"), "stats": info},
+                        ensure_ascii=False) + "\n")
+            except Exception:
+                pass
         elif kind == "src_lang":
             code = str(data.get("code", "") or "")
             if code:
@@ -1486,6 +1615,7 @@ class LiveEngine(QObject):
         if self._translator is None:
             return
         self._translator.set_lang(self._lang_code)
+        self._translator.set_mode(self._mode)
         self._translator.set_auto_download(self._auto_download)
         self._translator.set_src_lang(self._src_lang)
         self._translator.set_peer_lang(self._peer_lang)
@@ -1527,6 +1657,39 @@ class LiveEngine(QObject):
                 self.logLine.emit(f"загрузка {model_id} отменена")
             self._downloads.pop(model_id, None)
             self.downloadsChanged.emit()
+
+    def _apply_mode(self, data) -> None:
+        """Фактические параметры режима от движка."""
+        self._mode = str(data.get("mode", self._mode) or self._mode)
+        self._mode_info = (
+            f"ASR {data.get('asr_model', '')} ({data.get('asr_compute', '')})"
+            f", beam {data.get('beam_size', '')}"
+            f", TTS chunk {data.get('stream_chunk', '')}"
+            f", проверок синтеза {data.get('verify_attempts', '')}"
+            f"; вариантов ASR: {data.get('asr_alternatives', 0)}"
+            f", TTS: {data.get('tts_alternatives', 0)}")
+        self.modeChanged.emit()
+
+    def _apply_metrics(self, data) -> None:
+        """Метрики реплики: в UI (последние) и в диагностический лог."""
+        self._metrics = {k: v for k, v in data.items() if k != "event"}
+        try:
+            self._dropped = int(data.get("dropped", self._dropped) or 0)
+            self._cancelled = int(data.get("cancelled", self._cancelled) or 0)
+        except Exception:
+            pass
+        self.metricsChanged.emit()
+        try:
+            import json
+            import time
+            logs = os.path.join(sp.workspace(), "logs")
+            os.makedirs(logs, exist_ok=True)
+            line = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), **self._metrics}
+            with open(os.path.join(logs, "diagnostics.log"), "a",
+                      encoding="utf-8") as fh:
+                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     def _apply_pack(self, data) -> None:
         code = str(data.get("code", "") or "")

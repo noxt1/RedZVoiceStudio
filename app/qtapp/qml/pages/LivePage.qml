@@ -313,6 +313,17 @@ Item {
                             font.pixelSize: Theme.fontTinyPx
                             elide: Text.ElideRight
                         }
+                        // промежуточное распознавание: показ, без перевода
+                        Text {
+                            width: parent.width
+                            visible: liveEngine.peerPartial !== ""
+                            text: "слышу: " + liveEngine.peerPartial
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            font.italic: true
+                            elide: Text.ElideRight
+                        }
                     }
 
                     Text {

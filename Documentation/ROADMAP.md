@@ -89,7 +89,7 @@
 | 3.3–3.5 | Установка, удаление, целостность, лицензии | DONE | обязательные файлы + размер; лицензия в карточке | `verify_repo` (es-ru ok), unit-тесты |
 | 3.6–3.7 | RAM/VRAM, CUDA/CPU | DONE | RAM/VRAM/устройства в карточке | карточки ASR/TTS |
 | 3.8–3.9 | Запуск/остановка, состояние | DONE | NOT INSTALLED/STOPPED/READY/downloading | runtime `states` |
-| 3.10 | Совместимость с режимами Fast/Balanced/Quality/Manual | NOT STARTED | выбор режима влияет на набор моделей | — |
+| 3.10 | Совместимость с режимами Fast/Balanced/Quality/Manual | DONE | режим меняет ASR/compute/beam/chunk/проверки | runtime: fast/quality/balanced — разные параметры |
 | 3.11 | Выбор ASR/MT/TTS | DONE | выбор доходит до движка и сохраняется | runtime `model_selected`, `ui_settings.json` |
 | 3.12 | Прогресс/отмена загрузки | DONE | события `download` + `CANCELLED` | runtime: отмена ru-en → `CANCELLED`, модель не установлена |
 
@@ -135,10 +135,24 @@
 | 5.5 | Сетевые ошибки и частичные файлы | DONE | ошибка в событии; «установлено» = есть веса в снапшоте | `installed()` проверяет веса, unit-тест |
 | 5.6 | Повторное использование общих моделей | DONE | en-ru — общий ресурс пакетов en/de/it | `packs` runtime, unit-тест |
 
-## Фаза 6. Real-Time Pipeline 2.0 — P1 — `NOT STARTED`
+## Фаза 6. Real-Time Pipeline 2.0 — P0 — `DONE (частично)`
 
 (в прежней нумерации — фаза 5; перенумеровано по Master Roadmap, где
 фаза 5 — языковые пакеты и автозагрузка.)
+
+| ID | Задача | Статус | Критерий | Проверка |
+|---|---|---|---|---|
+| 6.1 | Режимы Fast/Balanced/Quality/Manual | DONE | реальные параметры движка, без скачиваний | runtime: `mode` события, ASR float16/int8 |
+| 6.2 | Streaming ASR (промежуточные результаты) | DONE (инкрементальный) | partial-срезы показываются, финал после VAD | runtime: 94 `peer_partial`, перевод только финала |
+| 6.3 | Дедупликация и порядок переводов | DONE | повтор фразы не переводится дважды | unit: `test_same_phrase_translated_once` |
+| 6.4 | Generation guards | DONE | старые результаты не доходят до озвучки | unit + runtime `cancelled` |
+| 6.5 | Streaming TTS | DONE (было) | чанки по мере синтеза, без наложения | runtime метрики `tts_first_ms` |
+| 6.6 | Smart turn | DONE (было) | пауза 0.8 с, мин 0.45 с, макс 18 с | существующий VAD + тесты |
+| 6.7 | Bounded queues / backpressure | DONE | очередь ограничена, вытеснение с подсчётом | runtime: `queue` 0–2, `dropped` |
+| 6.8 | Метрики и диагностика | DONE | ASR/MT/TTS/очереди/RAM/VRAM в лог | `logs/diagnostics.log`, блок «Диагностика» |
+| 6.9 | Нагрузочный тест | DONE (короткий) | без роста очередей и зависаний | 5 итераций, RSS 4258–5485 МБ |
+| 6.10 | Многочасовой прогон | NOT STARTED | нет утечек за часы работы | — |
+| 6.11 | Настоящий streaming-ASR (word-by-word) | NOT STARTED | потоковое декодирование, не срезы | faster-whisper его не даёт |
 
 | ID | Задача | Статус | Критерий |
 |---|---|---|---|

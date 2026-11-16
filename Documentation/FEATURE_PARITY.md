@@ -55,6 +55,12 @@
 | Языковые пакеты (10 языков) | «Модели» → Языковые пакеты | `packs`/`pack_*` | es READY, остальные PARTIAL/UNSUPPORTED | PASS |
 | Прогресс и отмена загрузки | «Модели» → карточка | `download`-события + `model_cancel` | DOWNLOADING → CANCELLED | PASS |
 | Определение языка: смена и приоритет ручного | Перевод → язык собеседника | `_detect_peer_lang` | смена после 2 фраз; ручной режим не перезаписывается | PASS |
+| Режимы Fast/Balanced/Quality/Manual | Настройки → «Режим работы» | `Engine.set_mode` + `AppState.mode` | runtime: у режимов разные compute/beam/chunk; выбор сохраняется | PASS |
+| Промежуточное распознавание | Перевод → «слышу: …» | `peer_partial` | 94 события, перевод только финала | PASS (инкрементальное, не потоковое) |
+| Дедупликация и guards | — | `_last_translated`, `Engine.gen`, `seq` | повтор не переводится, старые чанки не играют | PASS |
+| Очереди и перегрузка | — | ограничены 8/3, вытеснение | runtime: `dropped` 2, очередь 0–2 | PASS |
+| Метрики и диагностика | Настройки → «Диагностика» | `metrics`/`stats` → `logs/diagnostics.log` | ASR 159–165 мс, MT 2.1 с, первый звук 451–1323 мс | PASS |
+| Перезапуск движка | — | `_proc_gen` | READY → STOPPED → READY без ложного ERROR | PASS |
 | Озвучка русского перевода в наушники | Перевод → «Переводить речь собеседника» | `incoming_speak` → `incoming_chunk` → отдельная очередь/поток | runtime: чанки пришли, поток наушников открыт, кабель не затронут | PASS |
 | Отображение оригинала и перевода в истории | История / Перевод | `peerTextReady` → `HistoryModel.add("in", ru, оригинал)` | runtime: запись вида «en / оригинал» | PASS |
 | Защита от аудиопетли | — | `_incoming_gate_closed` + `loopback.set_speaking` | runtime: пока играет перевод, фразы в ASR не уходят (`sent` не растёт) | PASS |
@@ -151,7 +157,7 @@
 
 | Статус | Кол-во |
 |---|---|
-| PASS | 51 |
+| PASS | 57 |
 | FAIL | 6 |
 | UNVERIFIED | 13 |
 | BLOCKED | 1 |

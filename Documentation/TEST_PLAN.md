@@ -74,6 +74,14 @@
 | Автозагрузка отсутствующего пакета | английская речь + auto_download | PASS — скачан en-ru (~594 МБ), `package installed`, первая фраза переведена и озвучена |
 | Языковые пакеты | `{"cmd":"packs"}` | PASS — 10 пакетов; es READY, en/de/it/fr/zh/hi/ar PARTIAL, pt/ja UNSUPPORTED |
 | Автоопределение языка | две английские фразы после испанской | PASS — смена es→en после подтверждения (prob 0.69) |
+| Режимы | `mode` fast/quality/balanced | PASS — compute int8→float16, beam 1→3, chunk 20/40/30 |
+| Промежуточный ASR | длинная испанская фраза | PASS — 94 `peer_partial`, перевод только финала |
+| EN→RU после смены языка | 2 английские фразы | PASS — `peer_lang` es→en, «Good morning…» → «Доброе утро.» |
+| Одновременные каналы | RU→ES + ES→RU | PASS — `out_tts` 1205 мс, входящий перевод и озвучка |
+| Перезапуск движка | stop → start | PASS — READY → STOPPED → READY |
+| Статистика | `cmd: stats` | PASS — RSS 4258 МБ, VRAM 1932 МБ, очередь 0 |
+| Нагрузка (короткая) | 5 итераций | PASS — очередь 0–2, dropped 2, без зависаний |
+| UI «Настройки» | снимок с режимом и диагностикой | PASS — `shots/settings_modes.png` |
 | UI «Модели» | запуск + снимки | PASS — `shots/models_asr.png`, `models_mt.png`, `models_packs.png` |
 | Интерфейс после изменений | скриншоты «Перевод» и «Настройки» | PASS — наложений нет, блок моделей помещается |
 | Запись образца | `toggleRecording` | UNVERIFIED — старт/стоп работают, сигнала в микрофоне не было |

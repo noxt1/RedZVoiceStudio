@@ -187,6 +187,48 @@ def _asr_candidates() -> list[str]:
 # остаётся игре и XTTS.
 MT_DEVICE = os.environ.get("REDZ_MT_DEVICE", "cpu")
 
+# ---------------------------------------------------------------------------
+# Режимы Fast / Balanced / Quality / Manual.
+#
+# Режим меняет ТОЛЬКО уже установленные модели и параметры декодирования:
+# ничего не скачивается. Если вариант один, это видно в mode_info
+# (asr_alternatives), а не заменяется выдуманной альтернативой.
+# ---------------------------------------------------------------------------
+MODES: dict[str, dict] = {
+    "fast": {
+        "title": "Fast",
+        "compute": "int8_float16",
+        "beam": 1,
+        "stream_chunk": 20,
+        "verify": 0,
+        "mt_device": "cpu",
+    },
+    "balanced": {
+        "title": "Balanced",
+        "compute": "int8_float16",
+        "beam": 1,
+        "stream_chunk": 30,
+        "verify": 1,
+        "mt_device": "cpu",
+    },
+    "quality": {
+        "title": "Quality",
+        "compute": "float16",
+        "beam": 3,
+        "stream_chunk": 40,
+        "verify": 2,
+        "mt_device": "cpu",
+    },
+    "manual": {
+        "title": "Manual",
+        "compute": "int8_float16",
+        "beam": 1,
+        "stream_chunk": 30,
+        "verify": 1,
+        "mt_device": "cpu",
+    },
+}
+
 # Размер чанка XTTS: чем меньше, тем раньше появляется первый звук.
 # Важно, когда GPU занят игрой.
 #
@@ -355,6 +397,21 @@ class Engine:
             os.environ.get("REDZ_PEER_LANG_MIN_SEC", "1.1"))
         self._peer_lang_min_words = int(
             os.environ.get("REDZ_PEER_LANG_MIN_WORDS", "2"))
+        # ---------- режим работы и метрики ----------
+        self.mode = "balanced"
+        self.asr_compute = ASR_COMPUTE
+        self.beam_size = 1
+        self.stream_chunk = STREAM_CHUNK
+        self.verify_attempts = 1
+        self.mt_device = MT_DEVICE
+        # Поколение результатов: растёт при любой смене настроек, старые
+        # результаты после неё отбрасываются (generation guards).
+        self.gen = 0
+        self._last_translated = ""
+        self._peer_seq = 0
+        self.dropped = 0
+        self.cancelled = 0
+        self.diagnostics = None
         # Последнее, что мы САМИ сказали в игру — по нему отсекаем
         # собственный голос, попавший в перехват из наушников.
         self.last_spoken: list[str] = []
@@ -372,12 +429,15 @@ class Engine:
         # Замер: int8_float16 даёт тот же текст, но VRAM 2241 -> 1019 МБ
         # и распознавание в ~2.4 раза быстрее.
         self.asr = None
-        for name in (ASR_MODEL, ASR_FALLBACK):
+        ordered = [self._pick_asr(self.mode)] + [ASR_MODEL, ASR_FALLBACK]
+        for name in ordered:
+            if not name or not _model_installed(name):
+                continue
             try:
                 self.asr = WhisperModel(name, device="cuda",
-                                        compute_type=ASR_COMPUTE)
+                                        compute_type=self.asr_compute)
                 self.asr_model = name
-                log(f"[engine] распознавание: {name} ({ASR_COMPUTE})")
+                log(f"[engine] распознавание: {name} ({self.asr_compute})")
                 break
             except Exception as exc:  # noqa: BLE001
                 log(f"[engine] не удалось загрузить {name}: {exc}")
@@ -460,20 +520,116 @@ class Engine:
         log(f"[engine] язык пользователя: {code}")
         return self.src_lang
 
-    def set_asr(self, name: str) -> str:
-        """Переключить модель распознавания (только уже установленную)."""
+    # ---------- режимы работы ----------
+    def _pick_asr(self, mode: str) -> str:
+        """Самая быстрая/качественная ИЗ УСТАНОВЛЕННЫХ ASR-модель."""
+        avail = _asr_candidates()
+        if not avail:
+            return ""
+        if mode == "fast":
+            return next((n for n in avail if "small" in n), avail[0])
+        return next((n for n in avail
+                     if "turbo" in n or "large" in n), avail[0])
+
+    def stats(self) -> dict:
+        """Диагностика: RAM/VRAM, очереди, счётчики отмен/потерь."""
+        vram = 0.0
+        try:
+            import torch
+            if torch.cuda.is_available():
+                vram = torch.cuda.memory_reserved() / (1024.0 * 1024.0)
+        except Exception:
+            pass
+        return {
+            "rss_mb": round(_rss_mb(), 1),
+            "vram_mb": round(vram, 1),
+            "queues": {"peer": self._peer_q.qsize()},
+            "dropped": self.dropped,
+            "cancelled": self.cancelled,
+            "gen": self.gen,
+            "mode": self.mode,
+            "loaded": self.loaded,
+        }
+
+    def _bump_gen(self, reason: str) -> None:
+        """Новое поколение результатов: старые уже не нужны."""
+        self.gen += 1
+        log(f"[engine] поколение {self.gen} ({reason})")
+
+    def mode_info(self) -> dict:
+        avail = _asr_candidates()
+        return {
+            "mode": self.mode,
+            "title": MODES.get(self.mode, MODES["balanced"])["title"],
+            "asr_model": self.asr_model,
+            "asr_compute": self.asr_compute,
+            "beam_size": self.beam_size,
+            "stream_chunk": self.stream_chunk,
+            "verify_attempts": self.verify_attempts,
+            "mt_device": self.mt_device,
+            "asr_alternatives": len(avail),
+            "tts_alternatives": 1,
+            "mt_note": "направление задаётся языком, не режимом",
+        }
+
+    def set_mode(self, code: str) -> dict:
+        """Применить режим Fast / Balanced / Quality / Manual.
+
+        Меняет только установленные модели и параметры декодирования:
+        ничего не скачивает. Manual — ручной выбор, режим ничего не
+        переопределяет.
+        """
+        code = (code or "").strip().lower()
+        if code not in MODES:
+            code = "balanced"
+        self.mode = code
+        if code != "manual":
+            conf = MODES[code]
+            self.asr_compute = conf["compute"]
+            self.beam_size = int(conf["beam"])
+            self.stream_chunk = int(conf["stream_chunk"])
+            self.verify_attempts = int(conf["verify"])
+            if conf["mt_device"] != self.mt_device:
+                self.mt_device = conf["mt_device"]
+                self._clear_mt_cache()
+            target = self._pick_asr(code)
+            # до загрузки движка ASR не трогаем: параметры применятся
+            # при старте, лишние секунды не тратятся
+            active = self.asr is not None or self.loaded
+            if active and target and (target != self.asr_model
+                           or self.asr_compute != getattr(self, "_asr_loaded_with",
+                                                          self.asr_compute)):
+                try:
+                    self._switch_asr(target, self.asr_compute)
+                except Exception as exc:  # noqa: BLE001
+                    log(f"[engine] режим {code}: ASR не переключена "
+                        f"({type(exc).__name__}: {exc})")
+        self._bump_gen(f"режим {code}")
+        info = self.mode_info()
+        log(f"[engine] режим: {info['title']} — ASR {info['asr_model']} "
+            f"({info['asr_compute']}, beam {info['beam_size']}), "
+            f"TTS chunk {info['stream_chunk']}, проверок {info['verify_attempts']}")
+        emit({"event": "mode", **info})
+        return info
+
+    def _switch_asr(self, name: str, compute: str | None = None) -> str:
+        """Загрузить другую установленную ASR-модель."""
         name = (name or "").strip()
-        if not name or name == self.asr_model:
-            return self.asr_model
-        if not _model_installed(name):
+        compute = compute or self.asr_compute
+        if not name or not _model_installed(name):
             raise RuntimeError(f"модель не установлена: {name}")
+        if name == self.asr_model and compute == getattr(
+                self, "_asr_loaded_with", self.asr_compute):
+            return self.asr_model
         from faster_whisper import WhisperModel
-        log(f"[engine] смена ASR: {self.asr_model} -> {name}")
+        log(f"[engine] смена ASR: {self.asr_model} -> {name} ({compute})")
         t0 = time.time()
-        new = WhisperModel(name, device="cuda", compute_type=ASR_COMPUTE)
+        new = WhisperModel(name, device="cuda", compute_type=compute)
         old = self.asr
         self.asr = new
         self.asr_model = name
+        self.asr_compute = compute
+        self._asr_loaded_with = compute
         try:
             del old
             import gc
@@ -486,6 +642,10 @@ class Engine:
         log(f"[engine] ASR переключена на {name} за "
             f"{int((time.time() - t0) * 1000)} мс")
         return self.asr_model
+
+    def set_asr(self, name: str) -> str:
+        """Переключить модель распознавания (ручной выбор, Manual)."""
+        return self._switch_asr(name, self.asr_compute)
 
     # ---------- каталог и управление моделями ----------
     REQUIRED_FILES = {
@@ -695,6 +855,7 @@ class Engine:
         """Выбрать модель: asr / tts / mt (направление перевода)."""
         if kind == "asr":
             name = self.set_asr(model_id)
+            self._bump_gen(f"выбор ASR {name}")
             return {"kind": "asr", "value": name}
         if kind == "tts":
             if model_id and model_id != "tts-hub/XTTS-v2":
@@ -711,6 +872,7 @@ class Engine:
                 raise RuntimeError("выбор языка перевода — это ru->X; "
                                    f"{src}->{dst} используется для входящей речи")
             code = self.set_lang(dst)
+            self._bump_gen(f"выбор направления {src}->{dst}")
             return {"kind": "mt", "value": item["id"], "lang": code}
         raise RuntimeError(f"неизвестный тип модели: {kind}")
 
@@ -868,6 +1030,7 @@ class Engine:
                 f"{type(exc).__name__}: {exc}")
             return self.lang
         self.lang = code
+        self._bump_gen(f"язык перевода {code}")
         log(f"[engine] язык перевода: {code} ({info['title']}), "
             f"XTTS: {info['xtts']}, RSS={_rss_mb():.0f} МБ")
         return self.lang
@@ -927,6 +1090,10 @@ class Engine:
         self.mt_tok = None
         self.mt = None
 
+    def _queue_len(self) -> list:
+        """Размер внутренних очередей (для метрик)."""
+        return [self._peer_q.qsize()]
+
     def _mt_for(self, code: str) -> list[tuple]:
         """Модели перевода ru -> язык (грузятся при первом обращении).
 
@@ -979,12 +1146,12 @@ class Engine:
             dtype = torch.float16
             try:
                 model = AutoModelForSeq2SeqLM.from_pretrained(
-                    name, dtype=dtype, low_cpu_mem_usage=True).to(MT_DEVICE).eval()
+                    name, dtype=dtype, low_cpu_mem_usage=True).to(self.mt_device).eval()
             except Exception:
                 # не все CPU поддерживают fp16-матмулы — откатываемся
                 model = AutoModelForSeq2SeqLM.from_pretrained(
                     name, dtype=torch.float32,
-                    low_cpu_mem_usage=True).to(MT_DEVICE).eval()
+                    low_cpu_mem_usage=True).to(self.mt_device).eval()
             if target:
                 chain.append((tok, model, target))
             else:
@@ -1162,7 +1329,8 @@ class Engine:
             if peak > 1e-4:
                 audio = audio / peak * 0.7
             segs, _ = self.asr.transcribe(
-                audio, task="translate", beam_size=1, vad_filter=False,
+                audio, task="translate", beam_size=self.beam_size,
+                vad_filter=False,
                 condition_on_previous_text=False,
                 no_speech_threshold=0.6, log_prob_threshold=-1.0)
             items = list(segs)
@@ -1216,7 +1384,8 @@ class Engine:
 
         # no_speech_threshold/log_prob_threshold — отсекаем пустые сегменты
         segs, _ = self.asr.transcribe(
-            audio, language=self.src_lang, beam_size=1, vad_filter=False,
+            audio, language=self.src_lang, beam_size=self.beam_size,
+            vad_filter=False,
             condition_on_previous_text=False,
             no_speech_threshold=0.6, log_prob_threshold=-1.0)
         # faster-whisper отдаёт генератор — собираем ОДИН раз
@@ -1245,6 +1414,7 @@ class Engine:
         if code not in allowed:
             code = "auto"
         self.peer_lang = code
+        self._bump_gen(f"язык собеседника {code}")
         self._lang_hits.clear()
         if code != "auto":
             # ручной выбор сразу становится подтверждённым и не
@@ -1256,33 +1426,76 @@ class Engine:
               "confirmed": self.peer_lang_confirmed})
         return self.peer_lang
 
-    def push_peer_pcm(self, pcm_bytes: bytes, sr: int = SR_ASR) -> bool:
-        """Отдать фрагмент звука игры на разбор (что говорят игроки)."""
+    def push_peer_pcm(self, pcm_bytes: bytes, sr: int = SR_ASR,
+                      partial: bool = False) -> bool:
+        """Отдать фрагмент звука игры на разбор (что говорят игроки).
+
+        partial=True — промежуточный срез ещё не законченной реплики:
+        он только показывается в интерфейсе и НЕ переводится.
+        """
         if not pcm_bytes:
             return False
         try:
-            self._peer_q.put_nowait((pcm_bytes, sr))
+            self._peer_q.put_nowait((pcm_bytes, sr, bool(partial)))
         except queue.Full:
-            # очередь переполнена — пропускаем фрагмент (лучше потерять
-            # реплику, чем копить задержку)
-            return False
+            # Очередь ограничена: лучше потерять промежуточный срез, чем
+            # копить задержку. Финальные фрагменты важнее — при перегрузке
+            # отбрасываем самый старый промежуточный.
+            if partial:
+                self.dropped += 1
+                return False
+            try:
+                old = self._peer_q.get_nowait()
+                self.dropped += 1
+                if not (len(old) > 2 and old[2]):
+                    # выкинули финальный фрагмент — вернём его в очередь
+                    self._peer_q.put_nowait(old)
+                    self.dropped += 1
+                    return False
+                self._peer_q.put_nowait((pcm_bytes, sr, False))
+            except (queue.Empty, queue.Full):
+                self.dropped += 1
+                return False
         return True
 
     def _peer_loop(self) -> None:
         """Поток разбора чужой речи: звук -> текст -> перевод на русский."""
         while True:
             try:
-                pcm, sr = self._peer_q.get(timeout=0.5)
+                item = self._peer_q.get(timeout=0.5)
             except queue.Empty:
                 continue
+            pcm, sr = item[0], item[1]
+            partial = bool(item[2]) if len(item) > 2 else False
+            gen = self.gen
+            t0 = time.time()
             try:
-                text, lang = self.transcribe_peer(pcm, sr)
+                text, lang = self.transcribe_peer(pcm, sr, partial=partial)
+                asr_ms = int((time.time() - t0) * 1000)
+                if gen != self.gen:
+                    self.cancelled += 1
+                    log("[engine] результат устарел (смена режима/языка/"
+                        "модели) — отброшен")
+                    continue
                 if not text:
+                    continue
+                if partial:
+                    # Промежуточный текст: только для показа, без перевода.
+                    self._peer_seq += 1
+                    emit({"event": "peer_partial", "text": text,
+                          "lang": lang or self.peer_lang_confirmed,
+                          "seq": self._peer_seq, "asr_ms": asr_ms})
                     continue
                 if self._is_own_voice(text):
                     log(f"[engine] перехват: это наш собственный голос, "
                         f"пропускаю ({text!r})")
                     continue
+                key = " ".join(text.lower().split())
+                if key and key == self._last_translated:
+                    self.cancelled += 1
+                    log("[engine] та же фраза уже переведена — пропускаю")
+                    continue
+                self._last_translated = key
                 if not self.reverse_available(lang):
                     # Если пользователь разрешил автоскачивание — скачиваем
                     # пакет и продолжаем с ЭТОЙ ЖЕ фразой (не теряем её).
@@ -1296,9 +1509,19 @@ class Engine:
                               "lang": lang, "missing_mt": f"{lang}->ru",
                               "can_download": not self.auto_download})
                         continue
+                t_mt = time.time()
                 ru = self._translate_peer_to_ru(text, lang, pcm, sr)
+                mt_ms = int((time.time() - t_mt) * 1000)
+                if gen != self.gen:
+                    self.cancelled += 1
+                    log("[engine] перевод устарел — отброшен")
+                    continue
                 emit({"event": "peer_text", "src": text, "ru": ru,
-                      "lang": lang})
+                      "lang": lang, "asr_ms": asr_ms, "mt_ms": mt_ms,
+                      "total_ms": int((time.time() - t0) * 1000),
+                      "queue": self._peer_q.qsize(),
+                      "dropped": self.dropped,
+                      "cancelled": self.cancelled})
             except Exception as exc:  # noqa: BLE001
                 log(f"[engine] перехват не удался: {type(exc).__name__}: {exc}")
 
@@ -1335,8 +1558,15 @@ class Engine:
                 return True
         return False
 
-    def transcribe_peer(self, pcm_bytes: bytes, sr: int = SR_ASR) -> tuple[str, str]:
-        """Распознать чужую речь. Возвращает (текст, язык)."""
+    def transcribe_peer(self, pcm_bytes: bytes, sr: int = SR_ASR,
+                        partial: bool = False) -> tuple[str, str]:
+        """Распознать чужую речь. Возвращает (текст, язык).
+
+        partial=True — промежуточное декодирование растущего фрагмента:
+        быстрый beam=1, без определения языка и без порогов финализации.
+        Это НЕ потоковое декодирование Whisper, а инкрементальные срезы:
+        окончательный текст даёт финальный фрагмент после VAD-паузы.
+        """
         import numpy as np
         audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         if sr != SR_ASR:
@@ -1349,7 +1579,8 @@ class Engine:
             audio = audio / peak * 0.7
         lang = None if self.peer_lang == "auto" else self.peer_lang
         segs, info = self.asr.transcribe(
-            audio, language=lang, beam_size=1, vad_filter=False,
+            audio, language=lang,
+            beam_size=1 if partial else self.beam_size, vad_filter=False,
             condition_on_previous_text=False,
             no_speech_threshold=0.6, log_prob_threshold=-1.0)
         items = list(segs)
@@ -1363,6 +1594,9 @@ class Engine:
         text = " ".join(s.text.strip() for s in speech).strip()
         if not text or is_hallucination(text):
             return "", self.peer_lang
+        if partial:
+            return text, self.peer_lang_confirmed or (
+                "" if self.peer_lang == "auto" else self.peer_lang)
         dur = audio.size / float(SR_ASR)
         words = len(text.split())
         detected = (getattr(info, "language", None) or "").lower()
@@ -1473,6 +1707,13 @@ class Engine:
     # ---------- синтез потоком ----------
     def _emit_chunk(self, part: np.ndarray, seq: int) -> None:
         """Отдать кусок аудио в GUI (base64 int16)."""
+        t0 = getattr(self, "_out_t0", None)
+        if t0 is not None and not getattr(self, "_out_first_sent", False):
+            self._out_first_sent = True
+            emit({"event": "metrics", "dir": "out_tts",
+                  "tts_first_ms": int((time.time() - t0) * 1000),
+                  "seq": seq, "queue": len(self._queue_len()),
+                  "dropped": self.dropped, "cancelled": self.cancelled})
         pcm = (np.clip(part, -1.0, 1.0) * 32767).astype(np.int16)
         emit({"event": "chunk", "seq": seq,
               "pcm": base64.b64encode(pcm.tobytes()).decode("ascii")})
@@ -1497,7 +1738,7 @@ class Engine:
             pass
         chunks = self.tts.inference_stream(
             spoken, xtts_language(lang or self.lang), self.gpt_latent,
-            self.spk_emb, stream_chunk_size=STREAM_CHUNK,
+            self.spk_emb, stream_chunk_size=self.stream_chunk,
             overlap_wav_len=2048, **params)
         parts = [c.detach().cpu().numpy() for c in chunks]
         if not parts:
@@ -1592,7 +1833,7 @@ class Engine:
                 torch.manual_seed(seed)
                 for c in self.tts.inference_stream(
                         spoken, xtts_language(tts_code), self.gpt_latent,
-                        self.spk_emb, stream_chunk_size=STREAM_CHUNK,
+                        self.spk_emb, stream_chunk_size=self.stream_chunk,
                         overlap_wav_len=2048, **params):
                     self._emit_chunk(c.detach().cpu().numpy(), seq)
             except Exception as exc:
@@ -1603,7 +1844,7 @@ class Engine:
 
         # короткая фраза: синтезируем целиком, проверяем, обрабатываем
         audio = np.zeros(0, dtype=np.float32)
-        for attempt in range(2):
+        for attempt in range(1 + self.verify_attempts):
             audio = self._synth_full(spoken, params, 1234 + attempt * 7919,
                                      lang=tts_code)
             if audio.size == 0:
@@ -1660,6 +1901,8 @@ class Engine:
         self.last_spoken.append((text, time.time()))
         del self.last_spoken[:-5]
         t0 = time.time()
+        gen = self.gen
+        first_ms = None
         try:
             import torch
             # ВАРИАТИВНЫЙ seed: с фиксированным 1234 каждая фраза звучала
@@ -1673,10 +1916,22 @@ class Engine:
             with self.lock:
                 for c in self.tts.inference_stream(
                         text, "ru", self.gpt_latent, self.spk_emb,
-                        stream_chunk_size=STREAM_CHUNK,
+                        stream_chunk_size=self.stream_chunk,
                         temperature=0.78, top_p=0.87, top_k=52,
                         speed=0.97, repetition_penalty=10.0,
                         overlap_wav_len=2048):
+                    if gen != self.gen:
+                        # язык/режим сменились — старый перевод не озвучиваем
+                        self.cancelled += 1
+                        log("[engine] входящий синтез устарел — оборван")
+                        break
+                    if first_ms is None:
+                        first_ms = int((time.time() - t0) * 1000)
+                        emit({"event": "metrics", "dir": "in_tts",
+                              "tts_first_ms": first_ms, "seq": seq,
+                              "queue": self._peer_q.qsize(),
+                              "dropped": self.dropped,
+                              "cancelled": self.cancelled})
                     self._emit_incoming_chunk(c.detach().cpu().numpy(), seq)
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] синтез входящего не удался: "
@@ -1806,11 +2061,19 @@ def main() -> None:
             elif cmd == "set_asr":
                 # переключение модели распознавания (только установленной)
                 name = engine.set_asr(msg.get("name", ""))
+                engine._bump_gen(f"ручной выбор ASR {name}")
                 emit({"event": "asr", "name": name})
+            elif cmd == "mode":
+                # режим Fast / Balanced / Quality / Manual
+                engine.set_mode(msg.get("code", "balanced"))
+            elif cmd == "stats":
+                # диагностика: RAM/VRAM/очереди/счётчики
+                emit({"event": "stats", **engine.stats()})
             elif cmd == "peer":
                 # фрагмент звука игры -> разбор речи игроков
                 pcm = base64.b64decode(msg.get("pcm", ""))
-                engine.push_peer_pcm(pcm, int(msg.get("sr", SR_ASR)))
+                engine.push_peer_pcm(pcm, int(msg.get("sr", SR_ASR)),
+                                     bool(msg.get("partial")))
             elif cmd == "liveliness":
                 # уровень живости от пользователя (0 — ровно, 3 — максимум)
                 engine.liveliness = max(0, min(3, int(msg.get("level", 2))))
@@ -1820,6 +2083,8 @@ def main() -> None:
                 pcm = base64.b64decode(msg.get("pcm", ""))
                 sr = int(msg.get("sr", SR_ASR))
                 floor = float(msg.get("floor", 0.0))
+                engine._out_t0 = time.time()
+                engine._out_first_sent = False
                 t0 = time.time()
                 ru = engine.transcribe(pcm, sr, floor)
                 t_asr = int((time.time() - t0) * 1000)

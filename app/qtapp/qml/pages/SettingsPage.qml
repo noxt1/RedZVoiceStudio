@@ -21,6 +21,18 @@ Item {
         { "label": "Полный экран", "value": "full" },
         { "label": "Окно", "value": "window" }
     ]
+    readonly property var modeItems: [
+        { "label": "Fast — минимальная задержка", "value": "fast" },
+        { "label": "Balanced — баланс (по умолчанию)", "value": "balanced" },
+        { "label": "Quality — максимум качества", "value": "quality" },
+        { "label": "Manual — ручной выбор моделей", "value": "manual" }
+    ]
+
+    function modeIndex() {
+        for (var i = 0; i < modeItems.length; i++)
+            if (modeItems[i].value === appState.mode) return i
+        return 1
+    }
 
     function bankIndex() {
         for (var i = 0; i < bankLangItems.length; i++) {
@@ -342,6 +354,41 @@ Item {
 
                     Rectangle { width: parent.width; height: 1; color: Theme.border }
 
+                    // ---- режим работы: реальные параметры движка ----
+                    Row {
+                        width: parent.width
+                        spacing: 10
+
+                        Text {
+                            text: "Режим работы"
+                            width: 196
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 13
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        AppCombo {
+                            width: parent.width - 226
+                            model: page.modeItems
+                            currentIndex: page.modeIndex()
+                            currentText: page.modeItems[page.modeIndex()].label
+                            onActivated: (i) => appState.setMode(
+                                page.modeItems[i].value)
+                        }
+                    }
+
+                    Text {
+                        width: parent.width
+                        visible: liveEngine.modeInfo !== ""
+                        text: liveEngine.modeInfo
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamilyMono
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Rectangle { width: parent.width; height: 1; color: Theme.border }
+
                     // ---- модели: только те, что реально установлены ----
                     Row {
                         width: parent.width
@@ -362,7 +409,10 @@ Item {
                             currentText: liveEngine.asrModels.length > 0
                                          ? liveEngine.asrModels[page.asrIndex()].label
                                          : "движок не запущен"
-                            enabled: liveEngine.asrModels.length > 1
+                            // ручной выбор имеет смысл только в режиме Manual
+                            enabled: appState.mode === "manual"
+                                      && liveEngine.asrModels.length > 1
+                            opacity: enabled ? 1.0 : 0.7
                             onActivated: (i) => appState.setAsrModel(
                                 liveEngine.asrModels[i].name)
                         }
@@ -418,6 +468,43 @@ Item {
                             flat: true
                             onClicked: liveEngine.requestModels()
                         }
+                    }
+
+                    Rectangle { width: parent.width; height: 1; color: Theme.border }
+
+                    // ---- диагностика: метрики последней реплики ----
+                    Text {
+                        text: "ДИАГНОСТИКА"
+                        color: Theme.accent
+                        font.family: Theme.fontFamilyText
+                        font.pixelSize: 10
+                        font.weight: Theme.weightBold
+                        font.letterSpacing: 1.4
+                    }
+                    Text {
+                        width: parent.width
+                        text: liveEngine.lastMetrics["total_ms"] !== undefined
+                              ? ("ASR " + liveEngine.lastMetrics["asr_ms"] + " мс · перевод "
+                                 + liveEngine.lastMetrics["mt_ms"] + " мс · до первого звука "
+                                 + liveEngine.lastMetrics["total_ms"] + " мс · очередь "
+                                 + liveEngine.lastMetrics["queue"])
+                              : (liveEngine.lastMetrics["tts_first_ms"] !== undefined
+                                 ? ("первый аудиочанк " + liveEngine.lastMetrics["tts_first_ms"] + " мс")
+                                 : "нет данных — скажи фразу в игре")
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamilyMono
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        width: parent.width
+                        text: "отброшено: " + liveEngine.lastMetrics["dropped"]
+                              + " · отменено: " + liveEngine.lastMetrics["cancelled"]
+                              + " · подробности: logs/diagnostics.log"
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamilyText
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
                     }
                 }
             }
