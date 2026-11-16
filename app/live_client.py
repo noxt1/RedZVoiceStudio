@@ -47,6 +47,8 @@ class LiveTranslator:
         self.error = ""
         self._lines: queue.Queue[str] = queue.Queue()
         self._reader: threading.Thread | None = None
+        self._stopping = False      # stop() закрыл поток штатно
+        self.last_send_error = ""   # последняя ошибка записи в stdin движка
         # RLock, а не Lock: _send() берёт его изнутри translate_pcm()
         self._lock = threading.RLock()
 
@@ -54,8 +56,15 @@ class LiveTranslator:
     def start(self) -> bool:
         """Запустить движок и загрузить модели."""
         with self._lock:
+            self._stopping = False
             if self.proc is not None:
-                return True
+                # процесс мог умереть (OOM, креш движка) — тогда перезапускаем
+                if self.proc.poll() is None:
+                    return True
+                self._diag_log("[gui] предыдущий движок уже завершился — перезапуск")
+                self.proc = None
+                self.ready = False
+                self.loading = False
             self._diag_log(f"[gui] start(): python={self.engine_python} "
                            f"script={self.script}")
             if not self.engine_python or not os.path.exists(self.engine_python):
@@ -175,8 +184,11 @@ class LiveTranslator:
             with self._lock:
                 self.proc.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
                 self.proc.stdin.flush()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Молча глотать нельзя: раньше ошибка записи (большой кадр
+            # собеседника) терялась и фраза просто исчезала.
+            self.last_send_error = str(exc)
+            self._diag_log(f"[gui] ошибка отправки {msg.get('cmd')}: {exc}")
 
     # ---------- приём ответов ----------
     def poll(self) -> None:
@@ -187,9 +199,14 @@ class LiveTranslator:
             except queue.Empty:
                 return
             if not line:
+                if self._stopping:
+                    # поток уже закрыт штатно (stop()) — не повторяем ошибку
+                    self.proc = None
+                    continue
                 self.error = "движок остановился"
                 self.ready = False
                 self.loading = False
+                self.proc = None      # иначе перезапуск считает процесс живым
                 self.on_event("state", {"error": self.error})
                 continue
             try:
@@ -221,6 +238,12 @@ class LiveTranslator:
                 self.on_event("incoming_done", msg)
             elif kind == "lang":
                 self.on_event("lang", msg)
+            elif kind == "models":
+                # список установленных моделей (ASR/TTS/MT)
+                self.on_event("models", msg)
+            elif kind == "asr":
+                # подтверждение смены модели распознавания
+                self.on_event("asr", msg)
             elif kind == "error":
                 self.error = msg.get("message", "")
                 self.busy = False
@@ -238,6 +261,20 @@ class LiveTranslator:
         except Exception:
             return False
 
+    def request_models(self) -> bool:
+        """Запросить у движка список реально установленных моделей."""
+        if not self.ready:
+            return False
+        self._send({"cmd": "models"})
+        return True
+
+    def set_asr_model(self, name: str) -> bool:
+        """Переключить модель распознавания (должна быть установлена)."""
+        if not self.ready or not name:
+            return False
+        self._send({"cmd": "set_asr", "name": str(name)})
+        return True
+
     def set_peer_lang(self, code: str) -> bool:
         """Язык чужой речи: auto или конкретный (es/en/it/ru)."""
         if not self.ready:
@@ -248,16 +285,29 @@ class LiveTranslator:
         except Exception:
             return False
 
-    def send_peer_pcm(self, pcm: np.ndarray, sr: int = 16000) -> bool:
-        """Отдать фрагмент звука игры на разбор речи игроков."""
-        if not self.ready:
+    def send_peer_pcm(self, pcm, sr: int = 16000) -> bool:
+        """Отдать фрагмент звука игры на разбор речи игроков.
+
+        Принимает И bytes int16 (так отдаёт wasapi_loopback), И float32-массив.
+        Раньше ожидался только массив: байты падали в np.clip, ошибка
+        глушилась, и звук собеседника вообще не доходил до движка.
+        """
+        if not self.ready or pcm is None:
             return False
         try:
-            data = (np.clip(pcm, -1.0, 1.0) * 32767).astype(np.int16)
+            if isinstance(pcm, (bytes, bytearray, memoryview)):
+                data = np.frombuffer(pcm, dtype=np.int16)
+            else:
+                arr = np.asarray(pcm, dtype=np.float32)
+                data = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
+            if data.size == 0:
+                return False
             self._send({"cmd": "peer", "sr": int(sr),
                         "pcm": base64.b64encode(data.tobytes()).decode("ascii")})
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_send_error = str(exc)
+            self._diag_log(f"[gui] peer не отправлен: {exc}")
             return False
 
     def incoming_speak(self, text: str, seq: int = 0,
@@ -316,24 +366,45 @@ class LiveTranslator:
         return True
 
     def stop(self) -> None:
-        """Остановить движок."""
+        """Остановить движок и выбросить всё, что не успело прозвучать.
+
+        Без очистки очереди уже синтезированные чанки продолжали играть
+        после остановки: пользователь останавливал модель, а перевод
+        ещё несколько секунд «договаривал» старые фразы.
+        """
         proc = self.proc
-        self.proc = None
+        self._stopping = True
         self.ready = False
         self.loading = False
+        self.busy = False
+        # Выбрасываем накопленные строки: чанки, тексты, события
+        try:
+            while True:
+                self._lines.get_nowait()
+        except queue.Empty:
+            pass
+        except Exception:
+            pass
+        self._lines = queue.Queue()
         if proc:
-            try:
-                self._send({"cmd": "quit"})
-            except Exception:
-                pass
+            # Сначала unload/quit (модели освобождают RAM), потом завершаем
+            # процесс.
+            for cmd in ({"cmd": "unload"}, {"cmd": "quit"}):
+                try:
+                    if proc.stdin:
+                        proc.stdin.write(json.dumps(cmd, ensure_ascii=False) + "\n")
+                        proc.stdin.flush()
+                except Exception:
+                    pass
             try:
                 proc.terminate()
-                proc.wait(timeout=3)
+                proc.wait(timeout=8)
             except Exception:
                 try:
                     proc.kill()
                 except Exception:
                     pass
+            self.proc = None
 
 
 def pcm_to_float16(pcm_bytes: bytes) -> np.ndarray:

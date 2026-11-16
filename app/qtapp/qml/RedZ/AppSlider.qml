@@ -1,0 +1,97 @@
+import QtQuick
+import RedZ 1.0
+
+/// Слайдер с меткой и значением. Кастомный — без QtQuick.Controls.
+Item {
+    id: root
+
+    property real value: 0.5
+    property real from: 0.0
+    property real to: 1.0
+    property string label: ""
+    property string suffix: ""
+    property int decimals: 0
+    property color accent: Theme.accent
+
+    signal moved(real value)
+
+    implicitWidth: 240
+    implicitHeight: 30
+
+    readonly property real pos: {
+        var r = (root.to - root.from)
+        return r === 0 ? 0 : (root.value - root.from) / r
+    }
+
+    Row {
+        anchors.fill: parent
+        spacing: Theme.spaceSM
+
+        Text {
+            text: root.label
+            color: Theme.textSecondary
+            font.family: Theme.fontFamilyText
+            font.pixelSize: Theme.fontSmallPx
+            verticalAlignment: Text.AlignVCenter
+            visible: root.label !== ""
+        }
+
+        Item {
+            id: trackArea
+            implicitWidth: 130
+            implicitHeight: 30
+            anchors.verticalCenter: parent.verticalCenter
+
+            Rectangle {
+                id: track
+                anchors.verticalCenter: parent.verticalCenter
+                x: 0
+                width: trackArea.width
+                height: 6
+                radius: 3
+                color: Theme.surface3
+            }
+
+            Rectangle {
+                id: fill
+                anchors.verticalCenter: track.verticalCenter
+                x: 0
+                width: track.width * root.pos
+                height: 6
+                radius: 3
+                color: root.accent
+            }
+
+            Rectangle {
+                id: handle
+                width: 16
+                height: 16
+                radius: 8
+                color: Theme.textPrimary
+                anchors.verticalCenter: track.verticalCenter
+                x: track.width * root.pos - 8
+                Behavior on x { NumberAnimation { duration: 60 } }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                onPressed: update(mouseX)
+                onPositionChanged: update(mouseX)
+
+                function update(mx) {
+                    var p = Math.max(0, Math.min(1, mx / track.width))
+                    root.value = root.from + (root.to - root.from) * p
+                    root.moved(root.value)
+                }
+            }
+        }
+
+        Text {
+            text: root.value.toFixed(root.decimals) + root.suffix
+            color: Theme.textPrimary
+            font.family: Theme.fontFamilyMono
+            font.pixelSize: Theme.fontSmallPx
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+}
