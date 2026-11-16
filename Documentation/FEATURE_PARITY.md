@@ -1,0 +1,126 @@
+# FEATURE_PARITY — Legacy ↔ новый интерфейс
+
+Обязательный документ. Показывает, что перенесено из Legacy в Qt-интерфейс,
+чем подтверждено и что осталось.
+
+Легенда: `PASS` — проверено в работе; `FAIL` — не работает/отсутствует;
+`UNVERIFIED` — код есть, работа не проверена; `BLOCKED` — нельзя проверить
+в текущих условиях.
+
+Проверено 2026-11-16 на `main` @ `9fc19e4` + рабочая директория.
+
+## 1. Управление движком
+
+| Функция Legacy | Новый экран | Backend / Engine | Как проверено | Результат |
+|---|---|---|---|---|
+| Запуск движка и загрузка моделей | Главная → «Запустить модель» | `AppState.startEngine` → `LiveEngine.start` → `LiveTranslator.start` → `tools/live_translate.py` | runtime: `LOADING` 0.2 с → `READY` 20.4 с, лог `load_ms=22814` | PASS |
+| Остановка движка | Главная → «Остановить модель» | `stop()` → `unload`+`quit` → terminate | runtime: `STOPPING` → `STOPPED`, «движок остановлен» | PASS |
+| Отображение состояния | карточка движка | `AppState.engineState` ← `LiveEngine.stateChanged` | runtime + скриншот «Готов к работе» | PASS |
+| Ошибки загрузки | тост + текст в карточке | `LiveEngine.errorMessage` → `AppState.syncEngineError` | runtime: убийство процесса → «движок остановился» | PASS |
+| Повторный запуск после падения | Главная | `start()` сбрасывает мёртвый `proc` | runtime: крах → ERROR → повторный `READY` за 22 с | PASS |
+| Прогрев как отдельное состояние (`WARMING UP`) | — | — | состояния нет: прогрев внутри `LOADING` | FAIL |
+| Автозагрузка моделей при старте | Настройки → тумблер | `AppState.autoStartEngine`, `main.py` | настройка сохраняется и читается; автозапуск по умолчанию выключен | UNVERIFIED (реальный автозапуск не прогонялся) |
+| Освобождение RAM/VRAM после остановки | — | `unload`/`quit`, kill процесса | лог движка: `unloaded`; замер VRAM после стопа не снимался | UNVERIFIED |
+
+## 2. Живой перевод
+
+| Функция Legacy | Новый экран | Backend / Engine | Как проверено | Результат |
+|---|---|---|---|---|
+| Push-to-Talk (зажать) | Главная → «Говорить (PTT)» | `pressToTalk/releaseToTalk` | runtime: микрофон открывается, 22 замера уровня, закрывается | PASS (логика) |
+| PTT при незагруженных моделях | Главная | `_start_hold` не требует READY | runtime: открывается только проверка микрофона, тост-предупреждение | PASS |
+| Непрерывный режим | Главная → тумблер | `setContinuous` + VAD по паузам | runtime: микрофон открыт, «непрерывный режим включён» | PASS (логика) |
+| Глобальный хоткей `Ctrl+Alt+L` | Настройки / Голос | `AppState.toggleHotkeys` → `hotkeys.GlobalHotkeys` | регистрация не прогонялась в этой сессии | UNVERIFIED |
+| Выбор языка перевода | Главная / Настройки | `LiveEngine.setLang` → `{"cmd":"lang"}` | лог движка: `команда: lang` → `event lang es` | PASS |
+| Язык собеседника (`auto`) | Главная | `setPeerLang` → `{"cmd":"peer_lang"}` | лог: `язык чужой речи: auto` | PASS |
+| Живость интонации 0–3 | Голос | `setLiveliness` → `{"cmd":"liveliness"}` | лог: `живость: 2` | PASS |
+| ASR русской речи | — | faster-whisper large-v3-turbo int8_float16 | e2e: reference.wav 22.5 с → текст 11 фраз | PASS |
+| Перевод RU→ES | — | `Helsinki-NLP/opus-mt-ru-es` (CPU) | e2e: «Уже хочу есть. Кофе с молоком?…» → «Ya tengo hambre. ¿Café con leche?…» | PASS |
+| Синтез TTS голосом пользователя | — | XTTS-v2 + кэш голоса | e2e: `chunk`-и получены, длительность аудио 22.5 с | PASS |
+| Воспроизведение перевода | Главная → «Включить перевод» / Мой голос | `_emit_audio` → мост или `sounddevice` | звук в колонки намеренно не прослушивался (тест с громкостью 0) | UNVERIFIED |
+| Речь реальным микрофоном | Главная | полный конвейер | в сессии микрофон давал ~0.002 RMS (тишина) | BLOCKED (нет говорящего в микрофон) |
+| Захват речи собеседников | Главная → «Включить перевод» | `startCapture` → `wasapi_loopback` | требует звука игры/системы | BLOCKED |
+| Озвучка входящего перевода в наушники | (нет в UI) | `incoming_tts.IncomingTTSProvider` | реализовано в ядре, экрана нет | FAIL (не подключено) |
+
+## 3. Аудио и маршрутизация
+
+| Функция Legacy | Новый экран | Backend / Engine | Как проверено | Результат |
+|---|---|---|---|---|
+| Выбор микрофона | Главная, Настройки | `AppState.setInDevice` → `LiveEngine.setMicDevice` | runtime: UI и движок совпадают, запоминание работает | PASS |
+| Выбор устройства вывода | Главная, Настройки | `setOutDevice` | список заполняется, выбор передаётся в движок | PASS |
+| Микрофон по умолчанию | Настройки | `AppState._pick_input` | маппер/Sound Mapper и виртуальные кабели пропускаются, выбран fifine | PASS |
+| Индикатор уровня | Главная | `_cont_callback` → `levelChanged` → `page.micLevel` | runtime: 0.62 → 16 сегментов; шкала −55…0 дБ | PASS |
+| Мост «микрофон + фразы + TTS → устройство» | Настройки → «Мост микрофон → кабель» | `AppState.toggleBridge` → `mic_bridge.MicBridge` | требует VB-CABLE, включение не прогонялось | UNVERIFIED |
+| Статус VB-CABLE | Настройки | `cable.is_installed` | runtime: «установлен» | PASS |
+| Установка VB-CABLE | Настройки → «Установить VB-CABLE» | `cable.download` + installer | установка не запускалась (кабель уже стоит) | UNVERIFIED |
+| Автомаршрутизация под кабель | Настройки → «Настроить под кабель» | `AppState.autoRoute` | не прогонялось | UNVERIFIED |
+| Громкость голоса | Голос → слайдер | `setVoiceVolume` → `LiveEngine.setVolume` + `bridge.mic_gain` | unit: 120 % → `live._volume = 1.2` | PASS |
+| Скорость речи / тон | — | — | в бэкенде таких параметров нет | FAIL (функции нет) |
+| Ducking на время перевода | — | `_duck` / `bridge.set_duck` | только при включённом мосте | UNVERIFIED |
+
+## 4. Голос, образец, профили
+
+| Функция Legacy | Новый экран | Backend / Engine | Как проверено | Результат |
+|---|---|---|---|---|
+| Запись дублей по 18 подсказкам | Голос | `VoiceController.toggleRecording` → `studio_core.Recorder` | runtime: запись стартует/останавливается; звука в микрофоне не было | UNVERIFIED (нет сигнала) |
+| Сборка reference | Голос → «Собрать reference» | `buildReference` → `core.build_reference` | метод есть, сборка не прогонялась (reference уже собран) | UNVERIFIED |
+| Прослушивание образца | Голос → «Прослушать образец» | `core.play_file` | не прогонялось (аудио не прослушивалось) | UNVERIFIED |
+| Сравнение с образцом | Голос → «Сравнить с образцом» | `VoiceController.compare` | не прогонялось | UNVERIFIED |
+| Список профилей | Голос | `AppState.profiles()` → `sp.list_profiles` | runtime: список читается | PASS |
+| Смена профиля | Голос | `setProfile` → `sp.set_active_profile` | не прогонялось | UNVERIFIED |
+| Статус «голос готов / нужен образец» | Голос | `hasReference()` | runtime: «Голос готов», прогресс 18/18 | PASS |
+| Запись reference из старого UI (18 подсказок) | Голос | те же модули | перенесено | PASS (перенос) |
+
+## 5. Фразы и озвучка
+
+| Функция Legacy | Новый экран | Backend / Engine | Как проверено | Результат |
+|---|---|---|---|---|
+| Банк фраз (33) | Фразы | `AppState.phraseBank` ← `core.load_lines` + `custom_phrases.json` | runtime: 34 при добавленной, 33 в базе | PASS |
+| Добавление своей фразы | Фразы → «Добавить фразу» | `addPhrase` → `custom_phrases.json` | runtime: id 101 добавлен и удалён | PASS |
+| Удаление своей фразы | Фразы → «Удалить выбранные» | `deletePhrase` | runtime: удалено, файл очищен | PASS |
+| Копирование фразы | Фразы | QML `TextEdit.copy()` | статически проверено | UNVERIFIED |
+| Прослушивание фразы | Фразы → ▶ | `playPhrase` → `bridge.play_phrase` / устройство | аудио не прослушивалось; несуществующий id не падает | UNVERIFIED |
+| Язык банка фраз (es/en/ow/it) | Настройки | `setBankLang` | runtime: переключение работает | PASS |
+| Массовая озвучка 31 реплики (Piper/XTTS) | — | `tools/voice_everything.py` и др. | CLI-инструменты, экрана в новом UI нет | FAIL (не перенесено) |
+| Сборка серверного ресурса для RedM | — | `core.export_server_resource` | экрана в новом UI нет | FAIL (не перенесено) |
+| Оверлей субтитров | — | `tools/overlay_win.py` | экрана в новом UI нет | FAIL (не перенесено) |
+| Проверки качества (rules/sync/similarity) | — | `tools/check_*.py`, `voice_similarity.py` | экрана в новом UI нет | FAIL (не перенесено) |
+
+## 6. История, настройки, служебное
+
+| Функция Legacy | Новый экран | Backend / Engine | Как проверено | Результат |
+|---|---|---|---|---|
+| История переводов | История | `HistoryModel.add` из `main.py` (`textReady`/`peerTextReady`) | runtime: out и in добавляются, направления верные | PASS |
+| Проиграть из истории | История → ▶ | `LiveEngine.replay` | вызов не падает | UNVERIFIED (звук не слушался) |
+| Копировать / удалить запись | История | `TextEdit.copy()`, `HistoryModel.removeAt` | runtime: удаление и очистка работают | PASS |
+| Счётчик записей | История | `historyModel.count()` | runtime: «Всего записей: 2» | PASS |
+| Подсказки (info-тосты) | Настройки | `setHints`, фильтр в `main.qml` | runtime: сохраняется в `ui_settings.json` | PASS |
+| Режим экрана (окно/полный) | Настройки | `setFullscreen` → `visibility` окна | runtime: применение при переключении не открывалось | UNVERIFIED |
+| Сохранение настроек | Настройки | `ui_settings.json` | runtime: значения записаны и прочитаны | PASS |
+| Диагностика `--diag-voice-all`, панель задачи | — | legacy Tk | в новом UI нет | FAIL (не перенесено) |
+| Защита от двух экземпляров | — | `studio_paths.single_instance_lock` | не проверялось | UNVERIFIED |
+| Обновление VRAM/GPU | Главная | `nvidia-smi` раз в 4 с | runtime: «8.7 / 16 GB» | PASS |
+
+## 7. Пояснения к FAIL
+
+1. **Прогрев отдельным состоянием.** Движок отдаёт одно событие `ready` после
+   полной загрузки; промежуточных «warming» нет. Ввести `WARMING UP` можно
+   только эвристикой по времени — требует решения (см. ROADMAP 2.1).
+2. **Скорость/тон.** `live_translate.py` принимает `lang`, `peer_lang`,
+   `liveliness`; параметров темпа и тона нет.
+3. **Массовая озвучка, сборка ресурса, оверлей, проверки качества.** Это
+   CLI-инструменты, работавшие из Tk-вкладок «Проверка» и «В игру». В новый
+   UI они не перенесены — это основной объём незакрытой совместимости.
+4. **Входящий TTS в наушники.** Класс есть и используется движком через
+   `incoming_chunk`, но UI не даёт его включить.
+
+## 8. Итог
+
+| Статус | Кол-во |
+|---|---|
+| PASS | 25 |
+| FAIL | 9 |
+| UNVERIFIED | 18 |
+| BLOCKED | 2 |
+
+`FEATURE_PARITY` не закрыт: 29 пунктов без подтверждения. Основные риски —
+аудио-маршрут с кабелем, реальная речь через микрофон, небранные CLI-сценарии.
