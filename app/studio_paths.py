@@ -78,29 +78,29 @@ def app_dir() -> str:
 
 def local_app_data() -> str:
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    path = os.path.join(base, APP_NAME)
-    _migrate_data_dir(base, path)
-    return path
+    return _migrate_data_dir(base, os.path.join(base, APP_NAME))
 
 
-def _migrate_data_dir(base: str, target: str) -> None:
+def _migrate_data_dir(base: str, target: str) -> str:
     """Переименовать старую папку данных после смены названия.
 
-    Модели и настройки остаются на месте: переименование дешевле копирования
-    4+ ГБ. Если Windows держит файлы (запущен движок) — молча оставляем
-    старую папку: потерять данные хуже, чем не переименовать.
+    Возвращает папку, в которой реально надо работать. Если переименование
+    не удалось (Windows держит файлы — запущен движок), возвращаем старую
+    папку: иначе приложение стартовало бы с пустым workspace и «потеряло»
+    модели и настройки.
     """
     if os.path.isdir(target):
-        return
+        return target
     for old in getattr(branding, "LEGACY_DATA_DIRS", ()) or ():
         src = os.path.join(base, old)
         if not os.path.isdir(src):
             continue
         try:
             os.replace(src, target)
-            return
+            return target
         except Exception:
-            return
+            return src
+    return target
 
 
 def workspace() -> str:

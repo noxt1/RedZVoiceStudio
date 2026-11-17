@@ -9,17 +9,17 @@
 from __future__ import annotations
 
 # --- название ---
-BRAND_NAME = "RedZ Voice Studio"      # полное, для заголовка окна
-BRAND_SHORT = "RedZ"                  # крупная надпись в боковом меню
+BRAND_NAME = "Auraloom"               # полное, для заголовка окна
+BRAND_SHORT = "Auraloom"              # крупная надпись в боковом меню
 BRAND_SUB = "Voice Studio"            # подпись под ней
 BRAND_TAGLINE = "Голос · Перевод · Игра"
-ORG_NAME = "RedZ"
+ORG_NAME = "Auraloom"
 
 # --- данные ---
 # Папка в %LOCALAPPDATA%: workspace, движок, кэш моделей.
-DATA_DIR = "RedZVoiceStudio"
+DATA_DIR = "Auraloom"
 # Прежние имена папки: если текущей нет, а такая есть — переименуем.
-LEGACY_DATA_DIRS = ()
+LEGACY_DATA_DIRS = ("RedZVoiceStudio",)
 
 
 def display_name() -> str:

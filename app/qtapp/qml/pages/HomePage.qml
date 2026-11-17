@@ -1011,7 +1011,7 @@ Item {
                     }
 
                     Text {
-                        text: "RedZ Voice Studio"
+                        text: brandName
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
