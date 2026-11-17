@@ -12,7 +12,7 @@
 | Проверка | Команда | Результат |
 |---|---|---|
 | Компиляция Python | `python -m compileall -q app` | PASS (без ошибок) |
-| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 84 теста (+22 в `test_peer_incoming_qt.py`) |
+| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 134 теста (вкл. 3 в `test_mt_quality.py`) |
 | QML-линт | `pyside6-qmllint -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/RedZ/*.qml` | PASS — 0 ошибок (только Info/Warning) |
 | Аудит API QML→Python | обход всех `appState.*`, `liveEngine.*`, `voiceController.*`, `*Model.*` в QML и `hasattr` на живых объектах | PASS — 74 обращения, 0 отсутствующих |
 | Аудит сигналов | AST: сравнение арности `Signal(...)` и `.emit(...)` | PASS — 0 расхождений (было 2, исправлено) |
@@ -43,6 +43,8 @@
 | Сценарий | Как проверялось | Результат |
 |---|---|---|
 | Запуск интерфейса | `test_launch.py`, скриншоты разделов | PASS |
+| Клавиатурная навигация | `tools/nav_key_check.py`: Tab → Down ×2 → Enter, затем Up → Space | PASS — home → voices → live, QTest в offscreen |
+| Все 7 экранов в двух разрешениях | скриншоты 1280×840 и 1920×1080 для главной, перевода, голоса, моделей, настроек, истории, фраз | PASS — `shots/*_1280x840.png`, `shots/*_1920x1080.png`; пустые состояния истории — ожидаемо |
 | Запуск движка | `state.startEngine()` | PASS — `LOADING` 0.2 с, `READY` 20.4 с |
 | Загрузка моделей (лог) | `live_engine.log` | PASS — ASR+MT 7.1 с, XTTS 10.4 с, RSS 2.1 ГБ |
 | Остановка движка | `state.stopEngine()` | PASS — `STOPPING` → `STOPPED`, «движок остановлен» |

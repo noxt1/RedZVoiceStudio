@@ -30,7 +30,11 @@ Item {
         Text {
             id: labelText
             text: root.label
-            width: Math.min(implicitWidth, Math.max(40, parent.width * 0.38))
+            // метка получает всю нужную ширину, если остаётся место под
+            // дорожку (минимум 30 px); иначе ужимается и обрезается
+            width: Math.min(implicitWidth,
+                            Math.max(40, parent.width - valueText.width
+                                     - 30 - Theme.spaceSM * 2))
             elide: Text.ElideRight
             color: Theme.textSecondary
             font.family: Theme.fontFamilyText

@@ -106,6 +106,7 @@ Window {
                 spacing: 6
 
                 Repeater {
+                    id: navRepeater
                     model: window.navItems
 
                     delegate: Item {
@@ -116,14 +117,29 @@ Window {
                         readonly property bool active: window.section === modelData.key
                         property bool hovered: false
 
+                        // клавиатура: Tab заходит в навигацию, стрелки ходят по пунктам,
+                        // Enter/Space открывают раздел
+                        activeFocusOnTab: true
+                        Keys.onDownPressed: {
+                            var next = navRepeater.itemAt(Math.min(index + 1, navRepeater.count - 1))
+                            if (next) next.forceActiveFocus()
+                        }
+                        Keys.onUpPressed: {
+                            var prev = navRepeater.itemAt(Math.max(index - 1, 0))
+                            if (prev) prev.forceActiveFocus()
+                        }
+                        Keys.onReturnPressed: window.section = modelData.key
+                        Keys.onEnterPressed: window.section = modelData.key
+                        Keys.onSpacePressed: window.section = modelData.key
+
                                                 Rectangle {
                             anchors.fill: parent
                             radius: Theme.radiusControl
                             color: navItem.active ? "transparent"
-                                 : (navItem.hovered ? Theme.surface1 : "transparent")
+                                 : ((navItem.hovered || navItem.activeFocus) ? Theme.surface1 : "transparent")
                             gradient: navItem.active ? Theme.gradNavActive : null
-                            border.color: navItem.active ? Theme.accent : "transparent"
-                            border.width: navItem.active ? 1 : 0
+                            border.color: (navItem.active || navItem.activeFocus) ? Theme.accent : "transparent"
+                            border.width: (navItem.active || navItem.activeFocus) ? 1 : 0
 
                             Behavior on color { ColorAnimation { duration: Theme.motionFast } }
 
