@@ -11,6 +11,8 @@ Item {
     implicitWidth: 180
     implicitHeight: 42
 
+    onValuesChanged: chart.requestPaint()
+
     Canvas {
         id: chart
         anchors.fill: parent
@@ -52,7 +54,6 @@ Item {
             ctx.fill()
         }
 
-        onValuesChanged: requestPaint()
         Component.onCompleted: requestPaint()
     }
 }

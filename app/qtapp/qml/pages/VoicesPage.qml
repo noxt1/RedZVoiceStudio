@@ -57,168 +57,162 @@ Item {
             height: 372
             spacing: 16
 
-            // ---------------- «микрофон» ----------------
+            // ---------------- живой голос: две орбы ----------------
             Card {
-                width: 300
+                width: parent.width - 336
                 height: parent.height
-                padding: 22
-                topColor: "#231A0F"
-                bottomColor: "#120F0A"
-                borderColor: Theme.accentDeep
+                padding: 18
 
                 Column {
                     anchors.fill: parent
-                    spacing: 8
-
-                    Item { width: 1; height: 2 }
+                    spacing: 6
 
                     Item {
-                        width: 132
-                        height: 132
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
+                        height: 30
 
-                        Glow {
-                            anchors.fill: parent
-                            glowColor: Theme.accent
-                            intensity: 0.5
-                            spread: 18
-                            cornerRadius: 66
-                        }
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: width / 2
-                            gradient: Gradient {
-                                GradientStop { position: 0.0; color: "#2A2013" }
-                                GradientStop { position: 1.0; color: "#150F08" }
+                        Row {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 10
+
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                source: "icons/mic.svg"
+                                color: Theme.accentCyan
+                                size: 17
                             }
-                            border.color: Theme.accentDeep
-                            border.width: 1.5
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Живой голос"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 15
+                                font.weight: Theme.weightSemiBold
+                            }
+                            StatusPill {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: page.hasRef ? "Голос готов" : "Нужен образец"
+                                pillState: page.hasRef ? "ready" : "idle"
+                                pillHeight: 22
+                            }
                         }
-                        Icon {
-                            anchors.centerIn: parent
-                            source: "icons/mic.svg"
-                            color: Theme.accent
-                            size: 56
-                        }
-                    }
 
-                    Text {
-                        text: appState.activeProfile !== "" ? appState.activeProfile : "Профиль по умолчанию"
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
-                        color: Theme.accentBright
-                        font.family: Theme.fontFamilyBrand
-                        font.pixelSize: 22
-                        font.weight: Theme.weightBold
-                    }
-
-                    StatusPill {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: page.hasRef ? "Голос готов" : "Нужен образец"
-                        pillState: page.hasRef ? "ready" : "idle"
-                    }
-
-                    Text {
-                        text: voiceController.progressText + " подсказок записано"
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        color: Theme.textSecondary
-                        font.family: Theme.fontFamilyText
-                        font.pixelSize: 12
-                    }
-
-                    Item { width: 1; height: 1 }
-
-                    AppButton {
-                        width: parent.width
-                        text: voiceController.selectedCount > 0
-                              ? "Собрать из выбранных (" + voiceController.selectedCount + ")"
-                              : "Собрать из всех записей"
-                        iconSource: "icons/sparkles.svg"
-                        baseColor: Theme.accent
-                        onClicked: voiceController.buildReference()
-                    }
-
-                    AppButton {
-                        width: parent.width
-                        text: "Прослушать образец"
-                        iconSource: "icons/play.svg"
-                        flat: true
-                        onClicked: voiceController.playSample(appState.referencePath())
-                    }
-                }
-            }
-
-            // ---------------- настройки голоса ----------------
-            Card {
-                width: parent.width - 316
-                height: parent.height
-                padding: 22
-
-                Column {
-                    anchors.fill: parent
-                    spacing: 14
-
-                    // движок
-                    Row {
-                        width: parent.width
-                        spacing: 10
-
-                        Icon {
-                            source: "icons/bolt.svg"
-                            color: Theme.textMuted
-                            size: 16
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
                         Text {
-                            text: "Голосовой движок"
-                            width: 168
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamilyText
-                            font.pixelSize: 13
+                            anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                        }
-                        // Движок выбирается автоматически (XTTS для клона,
-                        // Piper для языков, которых в XTTS нет) — ручной
-                        // выбор здесь ни на что не влиял.
-                        Text {
-                            text: "выбирается автоматически"
-                            width: parent.width - 340
-                            color: Theme.textMuted
+                            text: appState.activeProfile !== "" ? appState.activeProfile : "Профиль по умолчанию"
+                            elide: Text.ElideRight
+                            width: 200
+                            horizontalAlignment: Text.AlignRight
+                            color: Theme.accentBright
                             font.family: Theme.fontFamilyText
                             font.pixelSize: 12
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        StatusPill {
-                            text: page.engineOk ? "установлен" : "нет"
-                            pillState: page.engineOk ? "ready" : "warn"
-                            pillHeight: 22
-                            anchors.verticalCenter: parent.verticalCenter
                         }
                     }
 
-                    // профиль
+                    Item {
+                        width: parent.width
+                        height: parent.height - 200
+
+                        Row {
+                            anchors.fill: parent
+                            spacing: 6
+
+                            Item {
+                                width: (parent.width - 52) / 2
+                                height: parent.height
+
+                                MicOrb {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    width: Math.min(parent.width, parent.height - 40)
+                                    height: width
+                                    level: voiceController.recording ? 0.9 : 0.25
+                                    active: voiceController.recording || liveEngine.busy
+                                }
+
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    text: voiceController.recording ? "Запись…" : "Говорите…"
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 11
+                                }
+                            }
+
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                source: "icons/compare.svg"
+                                color: Theme.accentBright
+                                size: 22
+                            }
+
+                            Item {
+                                width: (parent.width - 52) / 2
+                                height: parent.height
+
+                                MicOrb {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    width: Math.min(parent.width, parent.height - 40)
+                                    height: width
+                                    level: liveEngine.busy ? 0.8 : 0.2
+                                    active: liveEngine.busy
+                                    iconSource: "icons/volume.svg"
+                                    ringColor: Theme.accentCyan
+                                    ringColor2: Theme.accentBlue
+                                }
+
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    text: liveEngine.busy ? "Перевод звучит…" : "Перевод прозвучит здесь"
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 11
+                                }
+                            }
+                        }
+                    }
+
+                    WaveBars {
+                        width: parent.width
+                        height: 40
+                        level: voiceController.recording ? 0.9 : 0.3
+                        active: voiceController.recording || liveEngine.busy
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: 8
+
+                        AppButton {
+                            width: (parent.width - 16) / 2
+                            text: voiceController.selectedCount > 0
+                                  ? "Собрать из выбранных (" + voiceController.selectedCount + ")"
+                                  : "Собрать из всех записей"
+                            iconSource: "icons/sparkles.svg"
+                            baseColor: Theme.accent
+                            onClicked: voiceController.buildReference()
+                        }
+
+                        AppButton {
+                            width: (parent.width - 16) / 2
+                            text: "Прослушать образец"
+                            iconSource: "icons/play.svg"
+                            flat: true
+                            onClicked: voiceController.playSample(appState.referencePath())
+                        }
+                    }
+
+                    // профиль и параметры голоса
                     Row {
                         width: parent.width
                         spacing: 10
 
-                        Icon {
-                            source: "icons/mic.svg"
-                            color: Theme.textMuted
-                            size: 16
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        Text {
-                            text: "Голосовой профиль"
-                            width: 168
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamilyText
-                            font.pixelSize: 13
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
                         AppCombo {
-                            width: parent.width - 210
+                            width: 180
+                            anchors.verticalCenter: parent.verticalCenter
                             model: page.profileItems
                             currentIndex: page.profileIndex
                             currentText: page.profileIndex >= 0 && page.profileItems.length > 0
@@ -230,49 +224,170 @@ Item {
                                 }
                             }
                         }
-                    }
 
-                    // громкость
-                    AppSlider {
-                        width: parent.width
-                        label: "Громкость голоса"
-                        from: 0
-                        to: 150
-                        value: appState.voiceVolume
-                        suffix: "%"
-                        onMoved: (v) => appState.setVoiceVolume(Math.round(v))
-                    }
+                        AppSlider {
+                            width: (parent.width - 200) / 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            label: "Громкость"
+                            from: 0
+                            to: 150
+                            value: appState.voiceVolume
+                            suffix: "%"
+                            onMoved: (v) => appState.setVoiceVolume(Math.round(v))
+                        }
 
-                    // живость
-                    AppSlider {
-                        width: parent.width
-                        label: "Живость интонации"
-                        from: 0
-                        to: 3
-                        value: appState.liveliness
-                        onMoved: (v) => {
-                            appState.setLiveliness(Math.round(v))
-                            liveEngine.setLiveliness(Math.round(v))
+                        AppSlider {
+                            width: (parent.width - 200) / 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            label: "Живость"
+                            from: 0
+                            to: 3
+                            value: appState.liveliness
+                            onMoved: (v) => {
+                                appState.setLiveliness(Math.round(v))
+                                liveEngine.setLiveliness(Math.round(v))
+                            }
                         }
                     }
+                }
+            }
 
-                    Rectangle {
-                        width: parent.width
-                        height: 1
-                        color: Theme.border
-                    }
+            // ---------------- справа: режим и статистика ----------------
+            Column {
+                width: 336
+                height: parent.height
+                spacing: 14
 
-                    // Горячие клавиши и выбор движка — в «Настройках».
-                    Row {
-                        width: parent.width
+                Card {
+                    width: parent.width
+                    height: 200
+                    padding: 16
+
+                    Column {
+                        anchors.fill: parent
                         spacing: 10
 
-                        AppButton {
+                        Text {
+                            text: "Режим работы"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 14
+                            font.weight: Theme.weightSemiBold
+                        }
+
+                        ModeSegment {
                             width: parent.width
-                            text: "Сравнить с образцом"
-                            iconSource: "icons/compare.svg"
-                            flat: true
-                            onClicked: voiceController.compare("delay", 1.2)
+                            vertical: true
+                            value: appState.mode
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: appState.mode === "fast" ? "Минимальная задержка"
+                                 : (appState.mode === "quality" ? "Максимальное качество"
+                                    : (appState.mode === "manual" ? "Ручные параметры"
+                                       : "Баланс скорости и качества"))
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 11
+                        }
+                    }
+                }
+
+                Card {
+                    width: parent.width
+                    height: parent.height - 214
+                    padding: 16
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 8
+
+                        Text {
+                            text: "Статистика"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 14
+                            font.weight: Theme.weightSemiBold
+                        }
+
+                        Repeater {
+                            model: [
+                                { "label": "Распознавание", "key": "asr_ms" },
+                                { "label": "Перевод", "key": "mt_ms" },
+                                { "label": "Синтез", "key": "tts_ms" }
+                            ]
+
+                            delegate: Row {
+                                width: parent.width
+                                height: 22
+                                spacing: 8
+
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.label
+                                    width: parent.width - 70
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 11
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 62
+                                    horizontalAlignment: Text.AlignRight
+                                    text: (liveEngine.lastMetrics
+                                           && liveEngine.lastMetrics[modelData.key] !== undefined)
+                                          ? liveEngine.lastMetrics[modelData.key] + " мс" : "—"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamilyMono
+                                    font.pixelSize: 11
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            height: 1
+                            color: Theme.border
+                        }
+
+                        Row {
+                            width: parent.width
+                            height: 20
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "VRAM"
+                                width: parent.width - 70
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 11
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 62
+                                horizontalAlignment: Text.AlignRight
+                                text: appState.vramTotal > 0
+                                      ? (appState.vramUsed / 1024).toFixed(1)
+                                        + " / " + Math.round(appState.vramTotal / 1024) + " GB"
+                                      : "—"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamilyMono
+                                font.pixelSize: 11
+                            }
+                        }
+
+                        StatSpark {
+                            width: parent.width
+                            height: parent.height - 140
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: voiceController.progressText + " подсказок записано"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 11
                         }
                     }
                 }
