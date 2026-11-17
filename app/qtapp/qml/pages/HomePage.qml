@@ -171,7 +171,7 @@ Item {
                             MicOrb {
                                 anchors.centerIn: parent
                                 anchors.verticalCenterOffset: -14
-                                width: Math.min(parent.height - 8, 210)
+                                width: Math.min(parent.height * 0.88, parent.width * 0.5, 320)
                                 height: width
                                 level: page.micLevel
                                 active: page.listening || liveEngine.busy
@@ -466,7 +466,7 @@ Item {
 
                                 delegate: Rectangle {
                                     width: parent.width
-                                    height: 40
+                                    height: Math.max(30, Math.min(38, (parent.height - 34) / 4 - 6))
                                     radius: Theme.radiusControl
                                     color: qa.containsMouse ? Theme.surface2 : "#10163A"
                                     border.width: 1

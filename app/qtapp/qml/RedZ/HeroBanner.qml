@@ -61,7 +61,7 @@ Item {
             anchors.right: parent.right
             anchors.rightMargin: 18
             anchors.verticalCenter: parent.verticalCenter
-            width: pillRow.width + 24
+            width: pillRow.implicitWidth + 24
             height: 32
             radius: 16
             color: "#0B1030"

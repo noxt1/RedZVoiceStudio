@@ -15,6 +15,16 @@ Item {
     implicitWidth: 420
     implicitHeight: 56
 
+    // фаза «дыхания»: волна чуть шевелится даже в тишине
+    property real phase: 0.0
+
+    Timer {
+        interval: 70
+        repeat: true
+        running: true
+        onTriggered: root.phase += 0.18
+    }
+
     // фиксированный «рисунок» волны: без Math.random, чтобы не дёргалось
     readonly property var pattern: [
         0.18, 0.34, 0.52, 0.78, 1.00, 0.72, 0.44, 0.62, 0.90, 0.66,
@@ -35,8 +45,10 @@ Item {
                 readonly property real base: root.pattern[index % root.pattern.length]
                 width: Math.max(2, Math.round(parent.parent.width / root.bars * 0.55))
                 height: {
-                    var amp = root.active ? (0.45 + root.level * 0.55) : 0.62
-                    return Math.max(3, root.height * base * amp)
+                    var amp = root.active ? (0.45 + root.level * 0.55) : 0.52
+                    var breathe = root.active ? 0.0
+                                             : 0.07 * Math.sin(root.phase + index * 0.45)
+                    return Math.max(3, root.height * base * (amp + breathe))
                 }
                 radius: width / 2
                 anchors.verticalCenter: parent.verticalCenter

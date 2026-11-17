@@ -28,7 +28,10 @@ Item {
         spacing: Theme.spaceSM
 
         Text {
+            id: labelText
             text: root.label
+            width: Math.min(implicitWidth, Math.max(40, parent.width * 0.38))
+            elide: Text.ElideRight
             color: Theme.textSecondary
             font.family: Theme.fontFamilyText
             font.pixelSize: Theme.fontSmallPx
@@ -39,6 +42,8 @@ Item {
         Item {
             id: trackArea
             implicitWidth: 130
+            width: Math.max(30, parent.width - labelText.width
+                            - valueText.width - Theme.spaceSM * 2)
             implicitHeight: 30
             anchors.verticalCenter: parent.verticalCenter
 
@@ -87,6 +92,7 @@ Item {
         }
 
         Text {
+            id: valueText
             text: root.value.toFixed(root.decimals) + root.suffix
             color: Theme.textPrimary
             font.family: Theme.fontFamilyMono

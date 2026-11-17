@@ -379,7 +379,8 @@ Item {
 
                         StatSpark {
                             width: parent.width
-                            height: parent.height - 140
+                            height: Math.max(0, parent.height - 158)
+                            visible: height > 20
                         }
 
                         Text {
@@ -388,6 +389,7 @@ Item {
                             color: Theme.textMuted
                             font.family: Theme.fontFamilyText
                             font.pixelSize: 11
+                            visible: parent.height > 210
                         }
                     }
                 }

@@ -125,6 +125,8 @@ Window {
                             border.color: navItem.active ? Theme.accent : "transparent"
                             border.width: navItem.active ? 1 : 0
 
+                            Behavior on color { ColorAnimation { duration: Theme.motionFast } }
+
                             Glow {
                                 anchors.fill: parent
                                 glowColor: Theme.accent
@@ -217,6 +219,29 @@ Window {
     // ==================================================================
     // Содержимое
     // ==================================================================
+    function enterPage() {
+        pageLoader.opacity = 0
+        pageShift.y = 10
+        pageEnter.restart()
+    }
+
+    ParallelAnimation {
+        id: pageEnter
+        NumberAnimation {
+            target: pageLoader
+            property: "opacity"
+            to: 1
+            duration: Theme.motionBase
+            easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: pageShift
+            property: "y"
+            to: 0
+            duration: Theme.motionSlow
+            easing.type: Easing.OutCubic
+        }
+    }
     // фирменное свечение и волны под содержимым страницы
     Item {
         anchors.left: sidebar.right
@@ -261,6 +286,11 @@ Window {
             if (window.section === "models") return "pages/ModelsPage.qml"
             return "pages/HomePage.qml"
         }
+
+        onSourceChanged: window.enterPage()
+        Component.onCompleted: window.enterPage()
+
+        transform: Translate { id: pageShift; y: 0 }
     }
 
     // страница просит перейти в другой раздел («Все записи →»)

@@ -51,6 +51,7 @@ Item {
         opacity: 0.35 * root.pulse
         layer.enabled: true
         visible: false
+        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
     }
 
     MultiEffect {
@@ -89,9 +90,17 @@ Item {
     }
 
     Icon {
+        id: orbIcon
         anchors.centerIn: parent
         source: root.iconSource
         color: Theme.textPrimary
         size: Math.round(root.width * 0.24)
+
+        SequentialAnimation on scale {
+            running: root.active
+            loops: Animation.Infinite
+            NumberAnimation { to: 1.06; duration: 700; easing.type: Easing.InOutQuad }
+            NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InOutQuad }
+        }
     }
 }
