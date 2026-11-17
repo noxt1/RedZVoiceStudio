@@ -1,29 +1,22 @@
 import QtQuick
 import RedZ 1.0
 
-/// Главная — по референсу.
-///
-///   • верхняя карточка движка: статус, запуск/остановка, VRAM справа
-///   • две карточки: «Мой голос» (исходящий перевод) и «Собеседник» (входящий)
-///   • «Последние переводы»
-///   • правая колонка: VRAM + фирменная панель
+/// Главная — по композиции референсов 09/10:
+///   • герой-баннер с знаком и волнами
+///   • карточка «Живой перевод»: орб, статус, волна, кнопки
+///   • справа: направление перевода, режим качества, состояние моделей
+///   • снизу: последние переводы и быстрые действия
 Item {
     id: page
 
     signal navigate(string key)
 
-    // ---- состояние экрана ----
+    // ---- состояние экрана (сохранено для совместимости) ----
     property bool continuous: false
     property real micLevel: 0.0
 
     readonly property bool ready: appState.engineState === "READY"
-
-    // ---- модели списков ----
-    property var micItems: []
-    property int micIndex: -1
-
-    property var sourceItems: []
-    property int sourceIndex: -1
+    readonly property bool listening: liveEngine.captureOn
 
     readonly property var langItems: [
         { "label": "🇪🇸  Испанский", "value": "es" },
@@ -34,8 +27,7 @@ Item {
     readonly property var peerLangItems: [
         { "label": "🇪🇸  Испанский", "value": "es" },
         { "label": "🇺🇸  Английский", "value": "en" },
-        { "label": "🇮🇹  Итальянский", "value": "it" },
-        { "label": "🇷🇺  Русский", "value": "ru" }
+        { "label": "🇮🇹  Итальянский", "value": "it" }
     ]
     readonly property var voiceItems: [
         { "label": "María (ES)", "value": "maria" },
@@ -47,7 +39,10 @@ Item {
     property int peerLangIndex: 0
     property int voiceIndex: 0
 
-    // ---- данные ----
+    // ---- микрофоны ----
+    property var micItems: []
+    property int micIndex: -1
+
     function refreshMics() {
         var devs = appState.inputDevices
         var out = []
@@ -61,16 +56,6 @@ Item {
             if (out[j].value === cur) idx = j
         }
         page.micIndex = idx >= 0 ? idx : (out.length > 0 ? 0 : -1)
-    }
-
-    function refreshSources() {
-        var devs = appState.outputDevices
-        var out = []
-        for (var i = 0; i < devs.length; i++) {
-            out.push({ "label": devs[i].name, "value": devs[i].id })
-        }
-        page.sourceItems = out
-        page.sourceIndex = out.length > 0 ? 0 : -1
     }
 
     function selectMic(i) {
@@ -87,14 +72,11 @@ Item {
         liveEngine.setContinuous(cont)
     }
 
-    Component.onCompleted: {
-        refreshMics()
-        refreshSources()
-    }
+    Component.onCompleted: refreshMics()
 
     Connections {
         target: appState
-        function onDevicesChanged() { page.refreshMics(); page.refreshSources() }
+        function onDevicesChanged() { page.refreshMics() }
     }
 
     Connections {
@@ -105,310 +87,527 @@ Item {
     // ==================================================================
     // Раскладка
     // ==================================================================
-    Row {
+    Column {
         anchors.fill: parent
-        spacing: 16
+        spacing: 14
 
-        // ---------- левая колонка ----------
-        Column {
-            id: mainCol
-            width: parent.width - 320 - 16
-            height: parent.height
-            spacing: 16
+        HeroBanner {
+            width: parent.width
+            height: 96
+        }
 
-            // ======================= карточка движка =======================
-            Card {
-                width: mainCol.width
-                height: 96
-                padding: 18
+        Row {
+            width: parent.width
+            height: parent.height - 96 - 14
+            spacing: 14
 
-                Item {
-                    anchors.fill: parent
+            // ---------- левая колонка ----------
+            Column {
+                id: leftCol
+                width: parent.width - 336 - 14
+                height: parent.height
+                spacing: 14
 
-                    Row {
-                        id: engineLeft
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 14
+                // ============ живой перевод ============
+                Card {
+                    width: leftCol.width
+                    height: parent.height - 260 - 14
+                    padding: 18
 
-                    // статус-кружок
-                    Item {
-                        width: 52
-                        height: 52
-                        anchors.verticalCenter: parent.verticalCenter
+                    Column {
+                        anchors.fill: parent
+                        spacing: 8
 
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: width / 2
-                            color: page.ready ? Theme.success : Theme.surface2
-                            opacity: page.ready ? 0.18 : 1
+                        // заголовок
+                        Item {
+                            width: parent.width
+                            height: 32
+
+                            Row {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 10
+
+                                Icon {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    source: "icons/wave.svg"
+                                    color: Theme.accentCyan
+                                    size: 18
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "Живой перевод"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 17
+                                    font.weight: Theme.weightSemiBold
+                                }
+                                StatusPill {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: page.listening ? "Активно" : "Ожидание"
+                                    pillState: page.listening ? "ready" : "idle"
+                                    pillHeight: 22
+                                }
+                            }
+
+                            Row {
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 8
+
+                                ModeSegment {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    compact: true
+                                    value: appState.mode
+                                }
+                            }
                         }
-                        Rectangle {
-                            width: 22
-                            height: 22
-                            radius: 11
-                            anchors.centerIn: parent
-                            color: page.ready ? Theme.success
-                                 : (appState.engineState === "LOADING" ? Theme.warning : Theme.textMuted)
+
+                        // орб + статус
+                        Item {
+                            width: parent.width
+                            height: parent.height - 32 - 8 - 62 - 8
+
+                            MicOrb {
+                                anchors.centerIn: parent
+                                anchors.verticalCenterOffset: -14
+                                width: Math.min(parent.height - 8, 210)
+                                height: width
+                                level: page.micLevel
+                                active: page.listening || liveEngine.busy
+                            }
+
+                            Column {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.bottom: parent.bottom
+                                spacing: 2
+
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: page.listening ? "Слушаю…" : "Нажмите и говорите"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 14
+                                    font.weight: Theme.weightMedium
+                                }
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: page.listening
+                                          ? (liveEngine.peerPartial || "Говорите на любом поддерживаемом языке")
+                                          : "Говорите на любом поддерживаемом языке"
+                                    color: Theme.textMuted
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 11
+                                }
+                            }
+                        }
+
+                        WaveBars {
+                            width: parent.width
+                            height: 34
+                            level: page.micLevel
+                            active: page.listening || liveEngine.busy
+                        }
+
+                        // кнопки
+                        Row {
+                            width: parent.width
+                            spacing: 10
+
+                            Rectangle {
+                                width: 200
+                                height: 44
+                                radius: Theme.radiusControl
+                                gradient: Theme.gradAccent
+
+                                Glow {
+                                    anchors.fill: parent
+                                    glowColor: Theme.accent
+                                    intensity: page.listening ? 0.85 : 0.45
+                                    cornerRadius: Theme.radiusControl
+                                }
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 8
+                                    Icon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: page.listening ? "icons/stop.svg" : "icons/mic.svg"
+                                        color: "#FFFFFF"
+                                        size: 16
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: page.listening ? "Остановить" : "Начать слушать"
+                                        color: "#FFFFFF"
+                                        font.family: Theme.fontFamilyText
+                                        font.pixelSize: 13
+                                        font.weight: Theme.weightSemiBold
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (liveEngine.captureOn) liveEngine.stopCapture()
+                                        else liveEngine.startCapture()
+                                    }
+                                }
+                            }
+
+                            // PTT
+                            Rectangle {
+                                width: 190
+                                height: 44
+                                radius: Theme.radiusControl
+                                color: pttArea.pressed ? Theme.surface3 : "#10163A"
+                                border.width: 1
+                                border.color: Theme.accent
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 8
+                                    Icon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: "icons/keyboard.svg"
+                                        color: Theme.accentBright
+                                        size: 16
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: pttArea.pressed ? "Говорю…" : "Зажать и говорить"
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamilyText
+                                        font.pixelSize: 13
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: pttArea
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onPressed: liveEngine.pressToTalk()
+                                    onReleased: liveEngine.releaseToTalk()
+                                }
+                            }
+
+                            Item { width: 1; height: 1 }
+
+                            // выбор микрофона
+                            AppCombo {
+                                width: 240
+                                height: 44
+                                anchors.verticalCenter: parent.verticalCenter
+                                model: page.micItems
+                                currentIndex: page.micIndex
+                                currentText: page.micIndex >= 0 && page.micItems.length > 0
+                                             ? page.micItems[page.micIndex].label : "микрофон не выбран"
+                                onActivated: (i) => page.selectMic(i)
+                            }
+                        }
+                    }
+                }
+
+                // ============ нижний ряд ============
+                Row {
+                    width: leftCol.width
+                    height: 260
+                    spacing: 14
+
+                    // последние переводы
+                    Card {
+                        width: parent.width - 296 - 14
+                        height: parent.height
+                        padding: 16
+
+                        Column {
+                            anchors.fill: parent
+                            spacing: 8
+
+                            Item {
+                                width: parent.width
+                                height: 26
+
+                                Row {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 8
+                                    Icon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: "icons/history.svg"
+                                        color: Theme.accentCyan
+                                        size: 17
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "Последние переводы"
+                                        color: Theme.textPrimary
+                                        font.family: Theme.fontFamilyText
+                                        font.pixelSize: 15
+                                        font.weight: Theme.weightSemiBold
+                                    }
+                                }
+
+                                Text {
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "Вся история →"
+                                    color: Theme.accentBright
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 11
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: page.navigate("history")
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Пока нет переводов — нажмите «Начать слушать»."
+                                color: Theme.textMuted
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 12
+                                visible: historyModel.count() === 0
+                            }
+
+                            ListView {
+                                width: parent.width
+                                height: parent.height - 40
+                                clip: true
+                                spacing: 2
+                                model: historyModel
+
+                                delegate: Item {
+                                    id: row
+                                    width: ListView.view.width
+                                    height: 38
+
+                                    required property string dir
+                                    required property string ru
+                                    required property string es
+                                    required property string time
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 8
+                                        color: hovered.containsMouse ? Theme.surface1 : "transparent"
+                                    }
+
+                                    Row {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 8
+                                        spacing: 10
+
+                                        Rectangle {
+                                            width: 6; height: 6; radius: 3
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: row.dir === "out" ? Theme.accent : Theme.success
+                                        }
+                                        Text {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: row.time
+                                            width: 52
+                                            color: Theme.textMuted
+                                            font.family: Theme.fontFamilyMono
+                                            font.pixelSize: 10
+                                        }
+                                        Text {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: row.dir === "out"
+                                                  ? "RU → " + row.es : "ES → " + row.ru
+                                            width: parent.width - 130
+                                            elide: Text.ElideRight
+                                            color: Theme.textPrimary
+                                            font.family: Theme.fontFamilyText
+                                            font.pixelSize: 12
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: hovered
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        acceptedButtons: Qt.NoButton
+                                        z: -1
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    // заголовок + подпись
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 3
+                    // быстрые действия
+                    Card {
+                        width: 296
+                        height: parent.height
+                        padding: 16
 
-                        Row {
+                        Column {
+                            anchors.fill: parent
                             spacing: 8
+
                             Text {
-                                text: "Движок:"
+                                text: "Быстрые действия"
                                 color: Theme.textPrimary
                                 font.family: Theme.fontFamilyText
-                                font.pixelSize: 21
+                                font.pixelSize: 15
                                 font.weight: Theme.weightSemiBold
                             }
-                            Text {
-                                text: {
-                                    var s = appState.engineState
-                                    if (s === "READY") return "Готов к работе"
-                                    if (s === "LOADING") return "Загрузка моделей…"
-                                    if (s === "ERROR") return "Ошибка"
-                                    return "Остановлен"
+
+                            Repeater {
+                                model: [
+                                    { "key": "models",   "label": "Модели",   "icon": "icons/layers.svg" },
+                                    { "key": "voices",   "label": "Голос",    "icon": "icons/mic.svg" },
+                                    { "key": "settings", "label": "Настройки", "icon": "icons/settings.svg" },
+                                    { "key": "phrases",  "label": "Фразы",    "icon": "icons/bolt.svg" }
+                                ]
+
+                                delegate: Rectangle {
+                                    width: parent.width
+                                    height: 40
+                                    radius: Theme.radiusControl
+                                    color: qa.containsMouse ? Theme.surface2 : "#10163A"
+                                    border.width: 1
+                                    border.color: Theme.border
+
+                                    Row {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 10
+                                        Icon {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            source: modelData.icon
+                                            color: Theme.accentCyan
+                                            size: 15
+                                        }
+                                        Text {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: modelData.label
+                                            color: Theme.textSecondary
+                                            font.family: Theme.fontFamilyText
+                                            font.pixelSize: 12
+                                        }
+                                    }
+
+                                    Icon {
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: "icons/chevron-right.svg"
+                                        color: Theme.textMuted
+                                        size: 12
+                                    }
+
+                                    MouseArea {
+                                        id: qa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: page.navigate(modelData.key)
+                                    }
                                 }
-                                color: {
-                                    var s = appState.engineState
-                                    if (s === "READY") return Theme.success
-                                    if (s === "LOADING") return Theme.warning
-                                    if (s === "ERROR") return Theme.danger
-                                    return Theme.textMuted
-                                }
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 21
-                                font.weight: Theme.weightBold
                             }
                         }
-
-                        Text {
-                            text: page.ready ? "Модели загружены" + (appState.gpuName ? " · " + appState.gpuName : "")
-                                             : "Модели не загружены"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamilyText
-                            font.pixelSize: 12
-                        }
-                    }
-
-                    }
-
-                    Row {
-                        id: engineRight
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 12
-
-                    // запуск
-                    Rectangle {
-                        width: 196
-                        height: 54
-                        radius: 11
-                        anchors.verticalCenter: parent.verticalCenter
-                        enabled: !page.ready
-                        opacity: page.ready ? 0.45 : 1.0
-                        gradient: Gradient {
-                            GradientStop { position: 0.0; color: Theme.successTile }
-                            GradientStop { position: 1.0; color: Theme.successTile }
-                        }
-                        border.color: Theme.success
-                        border.width: 1
-
-                        Glow {
-                            anchors.fill: parent
-                            glowColor: Theme.success
-                            intensity: 0.75
-                            spread: 13
-                            cornerRadius: 11
-                        }
-
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 8
-                            Icon { source: "icons/play.svg"; color: Theme.success; size: 16 }
-                            Text {
-                                text: "Запустить модель"
-                                color: Theme.textPrimary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 14
-                                font.weight: Theme.weightMedium
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: if (!page.ready) appState.startEngine()
-                        }
-                    }
-
-                    // остановка
-                    Rectangle {
-                        width: 196
-                        height: 54
-                        radius: 11
-                        anchors.verticalCenter: parent.verticalCenter
-                        enabled: page.ready
-                        opacity: page.ready ? 1.0 : 0.45
-                        gradient: Gradient {
-                            GradientStop { position: 0.0; color: Theme.dangerTile }
-                            GradientStop { position: 1.0; color: Theme.dangerTile }
-                        }
-                        border.color: Theme.danger
-                        border.width: 1
-
-                        Glow {
-                            anchors.fill: parent
-                            glowColor: Theme.danger
-                            intensity: 0.65
-                            spread: 13
-                            cornerRadius: 11
-                        }
-
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 8
-                            Icon { source: "icons/stop.svg"; color: Theme.danger; size: 16 }
-                            Text {
-                                text: "Остановить модель"
-                                color: Theme.textPrimary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 14
-                                font.weight: Theme.weightMedium
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: if (page.ready) appState.stopEngine()
-                        }
-                    }
                     }
                 }
             }
 
-            // ======================= две карточки =======================
-            Row {
-                width: mainCol.width
-                height: 360
-                spacing: 16
+            // ---------- правая колонка ----------
+            Column {
+                width: 336
+                height: parent.height
+                spacing: 14
 
-                // -------- Мой голос --------
+                // направление
                 Card {
-                    width: (parent.width - 16) / 2
-                    height: parent.height
+                    width: parent.width
+                    height: 148
+                    padding: 16
 
                     Column {
                         anchors.fill: parent
-                        spacing: 12
+                        spacing: 10
+
+                        Text {
+                            text: "Направление перевода"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 14
+                            font.weight: Theme.weightSemiBold
+                        }
 
                         Row {
                             width: parent.width
-                            spacing: 12
+                            spacing: 8
 
-                            Rectangle {
-                                width: 40; height: 40; radius: 11
-                                color: Theme.accentTile
-                                border.color: Theme.accentDeep
-                                border.width: 1
-                                Icon {
-                                    anchors.centerIn: parent
-                                    source: "icons/mic.svg"
-                                    color: Theme.accent
-                                    size: 20
+                            AppCombo {
+                                width: (parent.width - 44) / 2
+                                model: page.peerLangItems
+                                currentIndex: page.peerLangIndex
+                                currentText: page.peerLangItems[page.peerLangIndex].label
+                                onActivated: (i) => {
+                                    page.peerLangIndex = i
+                                    liveEngine.setPeerLang(page.peerLangItems[i].value)
                                 }
                             }
 
-                            Column {
-                                spacing: 3
-                                width: parent.width - 52
+                            Rectangle {
+                                width: 36
+                                height: 36
+                                radius: 18
                                 anchors.verticalCenter: parent.verticalCenter
-                                Row {
-                                    spacing: 8
-                                    Text {
-                                        text: "Мой голос"
-                                        color: Theme.textPrimary
-                                        font.family: Theme.fontFamilyText
-                                        font.pixelSize: 20
-                                        font.weight: Theme.weightSemiBold
-                                    }
-                                    StatusPill {
-                                        text: page.ready ? "Готов" : "Не готов"
-                                        pillState: page.ready ? "ready" : "idle"
-                                        pillHeight: 22
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
+                                color: swap.containsMouse ? Theme.surface2 : "#10163A"
+                                border.width: 1
+                                border.color: Theme.border
+                                Icon {
+                                    anchors.centerIn: parent
+                                    source: "icons/compare.svg"
+                                    color: Theme.accentCyan
+                                    size: 15
                                 }
+                                MouseArea {
+                                    id: swap
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: page.navigate("settings")
+                                }
+                            }
+
+                            Rectangle {
+                                width: (parent.width - 44) / 2
+                                height: 36
+                                radius: Theme.radiusControl
+                                color: "#10163A"
+                                border.width: 1
+                                border.color: Theme.border
                                 Text {
-                                    text: "Русский → Испанский, Английский, Итальянский"
-                                    width: parent.width
-                                    elide: Text.ElideRight
-                                    color: Theme.textSecondary
+                                    anchors.centerIn: parent
+                                    text: "🇷🇺  Русский"
+                                    color: Theme.textPrimary
                                     font.family: Theme.fontFamilyText
                                     font.pixelSize: 12
                                 }
                             }
                         }
 
-                        // ---- микрофон ----
                         Row {
                             width: parent.width
                             spacing: 8
 
-                            Icon {
-                                source: "icons/mic.svg"
-                                color: Theme.textMuted
-                                size: 15
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
                             Text {
-                                text: "Микрофон:"
-                                width: 118
-                                elide: Text.ElideRight
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 13
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            AppCombo {
-                                width: parent.width - 150
-                                model: page.micItems
-                                currentIndex: page.micIndex
-                                currentText: page.micIndex >= 0 && page.micItems.length > 0
-                                             ? page.micItems[page.micIndex].label : "нет устройств"
-                                onActivated: (i) => page.selectMic(i)
-                            }
-                        }
-
-                        // ---- язык перевода ----
-                        Row {
-                            width: parent.width
-                            spacing: 8
-
-                            Icon {
-                                source: "icons/translate.svg"
+                                text: "Мой язык:"
                                 color: Theme.textMuted
-                                size: 15
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Язык перевода:"
-                                width: 118
-                                elide: Text.ElideRight
-                                color: Theme.textSecondary
                                 font.family: Theme.fontFamilyText
-                                font.pixelSize: 13
+                                font.pixelSize: 11
                                 anchors.verticalCenter: parent.verticalCenter
                             }
+
                             AppCombo {
-                                width: parent.width - 150
+                                width: parent.width - 76
                                 model: page.langItems
                                 currentIndex: page.langIndex
                                 currentText: page.langItems[page.langIndex].label
@@ -418,669 +617,213 @@ Item {
                                 }
                             }
                         }
-
-                        // ---- режимы ----
-                        Row {
-                            width: parent.width
-                            spacing: 14
-
-                            AppSwitch {
-                                id: pttSwitch
-                                label: "Push-to-Talk"
-                                onToggled: (on) => page.setMode(!on)
-                            }
-
-                            Rectangle {
-                                width: 1
-                                height: 20
-                                color: Theme.border
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            AppSwitch {
-                                id: contSwitch
-                                label: "Непрерывный режим"
-                                onToggled: (on) => page.setMode(on)
-                            }
-                        }
-
-                        Binding { target: pttSwitch; property: "checked"; value: !page.continuous }
-                        Binding { target: contSwitch; property: "checked"; value: page.continuous }
-
-                        // ---- кнопка PTT ----
-                        Rectangle {
-                            id: pttBtn
-                            width: parent.width
-                            height: 62
-                            radius: 12
-                            gradient: Theme.gradAccent
-                            border.color: Theme.accentBright
-                            border.width: pttArea.pressed ? 2 : 1
-
-                            Glow {
-                                anchors.fill: parent
-                                glowColor: Theme.accent
-                                intensity: pttArea.pressed ? 0.9 : 0.55
-                                spread: 14
-                                cornerRadius: 12
-                            }
-
-                            Row {
-                                anchors.centerIn: parent
-                                spacing: 10
-                                Icon {
-                                    source: "icons/mic.svg"
-                                    color: Theme.accentInk
-                                    size: 22
-                                }
-                                Text {
-                                    text: pttArea.pressed ? "Говорю…" : "Говорить (PTT)"
-                                    color: Theme.accentInk
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 17
-                                    font.weight: Theme.weightSemiBold
-                                }
-                            }
-
-                            MouseArea {
-                                id: pttArea
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onPressed: liveEngine.pressToTalk()
-                                onReleased: liveEngine.releaseToTalk()
-                            }
-                        }
-
-                        // ---- уровень ----
-                        Row {
-                            width: parent.width
-                            spacing: 3
-
-                            Repeater {
-                                model: 26
-                                delegate: Rectangle {
-                                    width: 6
-                                    height: 20
-                                    radius: 3
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    color: index < Math.round(page.micLevel * 26)
-                                         ? (index < 17 ? Theme.success
-                                            : (index < 22 ? Theme.warning : "#E08A3C"))
-                                         : Theme.surface2
-                                    Behavior on color { ColorAnimation { duration: 60 } }
-                                }
-                            }
-
-                            Item { width: 1; height: 1 }
-
-                            Icon {
-                                source: "icons/volume.svg"
-                                color: Theme.textMuted
-                                size: 18
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
                     }
                 }
 
-                // -------- Собеседник --------
+                // режим
                 Card {
-                    width: (parent.width - 16) / 2
-                    height: parent.height
+                    width: parent.width
+                    height: 196
+                    padding: 16
 
                     Column {
                         anchors.fill: parent
-                        spacing: 12
-
-                        Row {
-                            width: parent.width
-                            spacing: 12
-
-                            Rectangle {
-                                width: 40; height: 40; radius: 11
-                                color: Theme.accentTile
-                                border.color: Theme.accentDeep
-                                border.width: 1
-                                Icon {
-                                    anchors.centerIn: parent
-                                    source: "icons/layers.svg"
-                                    color: Theme.accent
-                                    size: 20
-                                }
-                            }
-
-                            Column {
-                                spacing: 3
-                                width: parent.width - 52
-                                anchors.verticalCenter: parent.verticalCenter
-                                Row {
-                                    spacing: 8
-                                    Text {
-                                        text: "Собеседник"
-                                        color: Theme.textPrimary
-                                        font.family: Theme.fontFamilyText
-                                        font.pixelSize: 20
-                                        font.weight: Theme.weightSemiBold
-                                    }
-                                    StatusPill {
-                                        text: liveEngine.captureOn ? "Активен" : "Ожидание"
-                                        pillState: liveEngine.captureOn ? "ready" : "idle"
-                                        pillHeight: 22
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-                                Text {
-                                    text: "Испанский → Русский"
-                                    width: parent.width
-                                    elide: Text.ElideRight
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 12
-                                }
-                            }
-                        }
-
-                        // ---- источник речи ----
-                        Row {
-                            width: parent.width
-                            spacing: 8
-
-                            Icon {
-                                source: "icons/volume.svg"
-                                color: Theme.textMuted
-                                size: 15
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Источник речи:"
-                                width: 118
-                                elide: Text.ElideRight
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 13
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            AppCombo {
-                                width: parent.width - 150
-                                model: page.sourceItems.length > 0
-                                       ? page.sourceItems
-                                       : [{ "label": "Игра / Discord", "value": "game" }]
-                                currentIndex: page.sourceIndex >= 0 ? page.sourceIndex : 0
-                                currentText: page.sourceIndex >= 0 && page.sourceItems.length > 0
-                                             ? page.sourceItems[page.sourceIndex].label : "Игра / Discord"
-                                onActivated: (i) => { page.sourceIndex = i }
-                            }
-                        }
-
-                        // ---- язык собеседника ----
-                        Row {
-                            width: parent.width
-                            spacing: 8
-
-                            Icon {
-                                source: "icons/translate.svg"
-                                color: Theme.textMuted
-                                size: 15
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Язык собеседника:"
-                                width: 118
-                                elide: Text.ElideRight
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 13
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            AppCombo {
-                                width: parent.width - 150
-                                model: page.peerLangItems
-                                currentIndex: page.peerLangIndex
-                                currentText: page.peerLangItems[page.peerLangIndex].label
-                                onActivated: (i) => {
-                                    page.peerLangIndex = i
-                                    liveEngine.setPeerLang(page.peerLangItems[i].value)
-                                }
-                            }
-                        }
-
-                        // ---- голос ----
-                        Row {
-                            width: parent.width
-                            spacing: 8
-
-                            Icon {
-                                source: "icons/mic.svg"
-                                color: Theme.textMuted
-                                size: 15
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Голос:"
-                                width: 118
-                                elide: Text.ElideRight
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 13
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            AppCombo {
-                                width: parent.width - 150
-                                model: page.voiceItems
-                                currentIndex: page.voiceIndex
-                                currentText: page.voiceItems[page.voiceIndex].label
-                                onActivated: (i) => { page.voiceIndex = i }
-                            }
-                        }
-
-                        // ---- включить перевод ----
-                        Rectangle {
-                            id: peerBtn
-                            width: parent.width
-                            height: 56
-                            radius: 12
-                            color: liveEngine.captureOn ? "#0F1C3F" : "transparent"
-                            border.color: liveEngine.captureOn ? Theme.incoming : Theme.borderStrong
-                            border.width: 1.5
-
-                            Glow {
-                                anchors.fill: parent
-                                glowColor: liveEngine.captureOn ? Theme.incoming : Theme.accentDeep
-                                intensity: liveEngine.captureOn ? 0.7 : 0.28
-                                spread: 12
-                                cornerRadius: 12
-                            }
-
-                            Row {
-                                anchors.centerIn: parent
-                                spacing: 10
-                                Icon {
-                                    source: "icons/volume.svg"
-                                    color: liveEngine.captureOn ? Theme.incoming : Theme.textPrimary
-                                    size: 20
-                                }
-                                Text {
-                                    text: liveEngine.captureOn ? "Выключить перевод" : "Включить перевод"
-                                    color: liveEngine.captureOn ? Theme.incoming : Theme.textPrimary
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 16
-                                    font.weight: Theme.weightMedium
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (liveEngine.captureOn) liveEngine.stopCapture()
-                                    else liveEngine.startCapture()
-                                }
-                            }
-                        }
-
-                        // ---- индикаторы ----
-                        Row {
-                            width: parent.width
-                            spacing: 10
-
-                            Icon {
-                                source: "icons/wave.svg"
-                                color: liveEngine.captureOn ? Theme.incoming : Theme.textMuted
-                                size: 18
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: liveEngine.captureOn ? "Распознавание…" : "Распознавание выключено"
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            Item { width: 1; height: 1 }
-
-                            Rectangle {
-                                width: 8; height: 8; radius: 4
-                                color: liveEngine.busy ? Theme.warning : Theme.success
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Воспроизведение"
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ======================= история =======================
-            Card {
-                width: mainCol.width
-                height: mainCol.height - 96 - 360 - 32
-                padding: 18
-
-                Column {
-                    anchors.fill: parent
-                    spacing: 8
-
-                    Item {
-                        width: parent.width
-                        height: 26
-
-                        Row {
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 10
-
-                            Icon {
-                                source: "icons/history.svg"
-                                color: Theme.accent
-                                size: 20
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "Последние переводы"
-                                color: Theme.textPrimary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 17
-                                font.weight: Theme.weightSemiBold
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
+                        spacing: 10
 
                         Text {
-                            text: "Все записи →"
-                            color: Theme.accent
-                            font.family: Theme.fontFamilyText
-                            font.pixelSize: 12
-                            anchors.right: parent.right
-                            anchors.rightMargin: 6
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        MouseArea {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 116
-                            height: 26
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: page.navigate("history")
-                        }
-                    }
-
-                    Text {
-                        text: "Пока нет переводов — нажми «Говорить (PTT)»."
-                        color: Theme.textMuted
-                        font.family: Theme.fontFamilyText
-                        font.pixelSize: 12
-                        visible: historyModel.count() === 0
-                    }
-
-                    ListView {
-                        width: parent.width
-                        height: parent.height - 34
-                        clip: true
-                        spacing: 2
-                        model: historyModel
-
-                        delegate: Item {
-                            id: row
-                            width: ListView.view.width
-                            height: 44
-
-                            required property string dir
-                            required property string ru
-                            required property string es
-                            required property string time
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 8
-                                color: rowHover.hovered ? Theme.surface1 : "transparent"
-                            }
-
-                            Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 12
-
-                                Rectangle {
-                                    width: 8; height: 8; radius: 4
-                                    color: row.dir === "out" ? Theme.incoming : Theme.success
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    text: row.dir === "out" ? "RU → ES" : "ES → RU"
-                                    width: 66
-                                    color: Theme.textMuted
-                                    font.family: Theme.fontFamilyMono
-                                    font.pixelSize: 11
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    text: row.dir === "out" ? row.es : row.ru
-                                    width: parent.width - 260
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 14
-                                    elide: Text.ElideRight
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    text: row.time
-                                    color: Theme.textMuted
-                                    font.family: Theme.fontFamilyMono
-                                    font.pixelSize: 12
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Rectangle {
-                                    width: 28; height: 28; radius: 14
-                                    color: rowPlay.containsMouse ? Theme.surface3 : Theme.surface2
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    Icon {
-                                        anchors.centerIn: parent
-                                        source: "icons/play.svg"
-                                        color: Theme.textSecondary
-                                        size: 12
-                                    }
-                                    MouseArea {
-                                        id: rowPlay
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: liveEngine.replay(row.ru)
-                                    }
-                                }
-                            }
-
-                            MouseArea {
-                                id: rowHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                acceptedButtons: Qt.NoButton
-                                z: -1
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ---------- правая колонка ----------
-        Column {
-            width: 320
-            height: parent.height
-            spacing: 16
-
-            // ---- VRAM ----
-            Card {
-                width: parent.width
-                height: 96
-                padding: 16
-
-                Row {
-                    width: parent.width
-                    spacing: 12
-
-                    Rectangle {
-                        width: 40; height: 40; radius: 11
-                        color: Theme.accentTile
-                        border.color: Theme.accentDeep
-                        border.width: 1
-                        Icon {
-                            anchors.centerIn: parent
-                            source: "icons/cpu.svg"
-                            color: Theme.accent
-                            size: 20
-                        }
-                    }
-
-                    Column {
-                        spacing: 3
-                        anchors.verticalCenter: parent.verticalCenter
-                        Text {
-                            text: "VRAM"
-                            color: Theme.textMuted
-                            font.family: Theme.fontFamilyText
-                            font.pixelSize: 10
-                            font.weight: Theme.weightBold
-                            font.letterSpacing: 1.4
-                        }
-                        Text {
-                            text: appState.vramTotal > 0
-                                  ? (appState.vramUsed / 1024).toFixed(1) + " / "
-                                    + Math.round(appState.vramTotal / 1024) + " GB"
-                                  : "нет данных"
+                            text: "Режим качества"
                             color: Theme.textPrimary
                             font.family: Theme.fontFamilyText
-                            font.pixelSize: 15
+                            font.pixelSize: 14
                             font.weight: Theme.weightSemiBold
                         }
-                    }
-                }
 
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    width: parent.width
-                    height: 6
-                    radius: 3
-                    color: Theme.surface2
-
-                    Rectangle {
-                        width: parent.width * (appState.vramTotal > 0
-                                               ? Math.min(1, appState.vramUsed / appState.vramTotal)
-                                               : 0)
-                        height: parent.height
-                        radius: 3
-                        gradient: Theme.gradAccent
-                    }
-                }
-            }
-
-            // ---- фирменная панель ----
-            Card {
-                width: parent.width
-                height: parent.height - 96 - 16
-                padding: 22
-                topColor: Theme.cardTop
-                bottomColor: Theme.cardBottom
-                borderColor: Theme.accentDeep
-
-                Column {
-                    anchors.fill: parent
-                    spacing: 10
-
-                    Item { width: 1; height: 6 }
-
-                    LogoMark {
-                        size: 62
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-
-                    Text {
-                        text: brandName
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        color: Theme.accentBright
-                        font.family: Theme.fontFamilyBrand
-                        font.pixelSize: 25
-                        font.weight: Theme.weightBold
-                    }
-
-                    Text {
-                        text: "Ваш голос\nна любом языке"
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamilyBrand
-                        font.pixelSize: 15
-                        font.italic: true
-                        lineHeight: 1.15
-                    }
-
-                    Rectangle {
-                        width: 60
-                        height: 1
-                        color: Theme.accentDeep
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-
-                    Item { width: 1; height: 4 }
-
-                    Repeater {
-                        model: [
-                            "Распознавание речи",
-                            "Мгновенный перевод",
-                            "Высококачественный синтез"
-                        ]
-
-                        delegate: Row {
+                        ModeSegment {
                             width: parent.width
-                            spacing: 10
+                            vertical: true
+                            value: appState.mode
+                        }
 
-                            Rectangle {
-                                width: 20; height: 20; radius: 10
-                                color: Theme.accentTile
-                                border.color: Theme.accentDeep
-                                border.width: 1
-                                Icon {
-                                    anchors.centerIn: parent
-                                    source: "icons/check.svg"
-                                    color: Theme.accent
-                                    size: 11
+                        Text {
+                            width: parent.width
+                            text: appState.mode === "fast" ? "Минимальная задержка"
+                                 : (appState.mode === "quality" ? "Максимальное качество"
+                                    : (appState.mode === "manual" ? "Ручные параметры"
+                                       : "Баланс скорости и качества"))
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                // модели
+                Card {
+                    width: parent.width
+                    height: parent.height - 148 - 196 - 28
+                    padding: 16
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 8
+
+                        Item {
+                            width: parent.width
+                            height: 24
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Модели"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 14
+                                font.weight: Theme.weightSemiBold
+                            }
+
+                            Text {
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Управление"
+                                color: Theme.accentBright
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 11
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: page.navigate("models")
                                 }
                             }
-                            Text {
-                                text: modelData
-                                width: parent.width - 34
-                                wrapMode: Text.WordWrap
-                                color: Theme.textSecondary
-                                font.family: Theme.fontFamilyText
-                                font.pixelSize: 13
-                                anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Repeater {
+                            model: [
+                                { "name": "ASR", "value": "faster-whisper turbo", "icon": "icons/wave.svg" },
+                                { "name": "MT",  "value": "opus-mt",              "icon": "icons/translate.svg" },
+                                { "name": "TTS", "value": "XTTS-v2",              "icon": "icons/volume.svg" }
+                            ]
+
+                            delegate: Row {
+                                width: parent.width
+                                height: 30
+                                spacing: 10
+
+                                Icon {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    source: modelData.icon
+                                    color: Theme.accentCyan
+                                    size: 15
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.name
+                                    width: 34
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamilyMono
+                                    font.pixelSize: 11
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.value
+                                    width: parent.width - 150
+                                    elide: Text.ElideRight
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 11
+                                }
+                                Rectangle {
+                                    width: 7; height: 7; radius: 3.5
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: page.ready ? Theme.success : Theme.textMuted
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: page.ready ? "готово" : "нет"
+                                    color: page.ready ? Theme.success : Theme.textMuted
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 10
+                                }
+                            }
+                        }
+
+                        Item { width: 1; height: 4 }
+
+                        // запуск/остановка движка
+                        Row {
+                            width: parent.width
+                            spacing: 8
+
+                            Rectangle {
+                                width: (parent.width - 8) / 2
+                                height: 38
+                                radius: Theme.radiusControl
+                                gradient: page.ready ? null : Theme.gradAccent
+                                color: page.ready ? "#10163A" : "transparent"
+                                border.width: page.ready ? 1 : 0
+                                border.color: Theme.border
+                                opacity: page.ready ? 0.5 : 1
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 6
+                                    Icon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: "icons/play.svg"
+                                        color: page.ready ? Theme.textSecondary : "#FFFFFF"
+                                        size: 13
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "Запустить"
+                                        color: page.ready ? Theme.textSecondary : "#FFFFFF"
+                                        font.family: Theme.fontFamilyText
+                                        font.pixelSize: 11
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: !page.ready
+                                    onClicked: appState.startEngine()
+                                }
+                            }
+
+                            Rectangle {
+                                width: (parent.width - 8) / 2
+                                height: 38
+                                radius: Theme.radiusControl
+                                color: "#10163A"
+                                border.width: 1
+                                border.color: Theme.dangerDeep
+                                opacity: page.ready ? 1 : 0.5
+
+                                Row {
+                                    anchors.centerIn: parent
+                                    spacing: 6
+                                    Icon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: "icons/stop.svg"
+                                        color: Theme.danger
+                                        size: 13
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "Остановить"
+                                        color: Theme.textSecondary
+                                        font.family: Theme.fontFamilyText
+                                        font.pixelSize: 11
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: page.ready
+                                    onClicked: appState.stopEngine()
+                                }
                             }
                         }
                     }
-
-                    Item { width: 1; height: 1 }
-
-                    NeonWave {
-                        width: parent.width
-                        height: 88
-                        opacityBoost: 0.9
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-
-                    Item { width: 1; height: 1 }
                 }
             }
         }

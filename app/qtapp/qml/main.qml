@@ -47,7 +47,7 @@ Window {
         id: sidebar
         width: 236
         anchors.top: parent.top
-        anchors.bottom: footer.top
+        anchors.bottom: statusbar.top
         anchors.left: parent.left
         color: Theme.sidebar
 
@@ -171,7 +171,7 @@ Window {
             // ---------- закатное свечение внизу ----------
             Item {
                 width: parent.width
-                height: Math.max(90, sidebar.height - 182 - 264 - 14 - 4)
+                height: Math.max(150, sidebar.height - 182 - 372 - 18)
                 clip: true
 
                 Rectangle {
@@ -200,17 +200,15 @@ Window {
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     height: 90
-                    opacityBoost: 0.7
+                    opacityBoost: 0.55
                 }
 
-                Text {
-                    text: "Auraloom · v" + window.version
-                    color: Theme.textMuted
-                    font.family: Theme.fontFamilyMono
-                    font.pixelSize: 10
+                EngineBadge {
+                    width: parent.width - 24
+                    height: 104
+                    anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: 12
-                    anchors.horizontalCenter: parent.horizontalCenter
                 }
             }
         }
@@ -224,7 +222,7 @@ Window {
         anchors.left: sidebar.right
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.bottom: footer.top
+        anchors.bottom: statusbar.top
         clip: true
 
         Rectangle {
@@ -250,7 +248,7 @@ Window {
         anchors.left: sidebar.right
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.bottom: footer.top
+        anchors.bottom: statusbar.top
         anchors.margins: 18
         asynchronous: false
 
@@ -288,106 +286,20 @@ Window {
     }
 
     // ==================================================================
-    // Футер
+    // Строка состояния
     // ==================================================================
-    Rectangle {
-        id: footer
-        height: 46
+    StatusBar {
+        id: statusbar
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        color: Theme.surface0
-
-        Rectangle {
-            height: 1
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            color: Theme.border
-        }
-
-        Row {
-            anchors.left: parent.left
-            anchors.leftMargin: 18
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 10
-
-            Rectangle {
-                width: 8
-                height: 8
-                radius: 4
-                color: appState.engineState === "READY" ? Theme.success
-                     : (appState.engineState === "LOADING" ? Theme.warning : Theme.textMuted)
-                anchors.verticalCenter: parent.verticalCenter
-
-                SequentialAnimation on opacity {
-                    running: appState.engineState === "LOADING"
-                    loops: Animation.Infinite
-                    NumberAnimation { to: 0.3; duration: 600 }
-                    NumberAnimation { to: 1.0; duration: 600 }
-                }
-            }
-
-            Text {
-                text: appState.engineState === "LOADING" ? "Загрузка моделей…" : "Приложение готово"
-                color: Theme.textSecondary
-                font.family: Theme.fontFamilyText
-                font.pixelSize: Theme.fontSmallPx
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-
-        Row {
-            anchors.right: parent.right
-            anchors.rightMargin: 18
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 12
-
-            Repeater {
-                model: ["ASR", "MT", "TTS"]
-
-                delegate: Row {
-                    spacing: 6
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    Rectangle {
-                        width: 7
-                        height: 7
-                        radius: 3.5
-                        color: appState.engineState === "READY" ? Theme.success : Theme.textMuted
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        text: modelData
-                        color: Theme.textSecondary
-                        font.family: Theme.fontFamilyMono
-                        font.pixelSize: 11
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        text: "·"
-                        color: Theme.textMuted
-                        font.pixelSize: 11
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: index < 2
-                    }
-                }
-            }
-
-            Text {
-                text: "v" + window.version
-                color: Theme.textMuted
-                font.family: Theme.fontFamilyMono
-                font.pixelSize: 11
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
+        height: 38
     }
 
     Toast {
         id: toast
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: footer.top
+        anchors.bottom: statusbar.top
         anchors.bottomMargin: Theme.spaceLG
     }
 }

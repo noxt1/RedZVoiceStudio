@@ -28,4 +28,11 @@ Panel 1.0 Panel.qml
 WaveformVisualizer 1.0 WaveformVisualizer.qml
 LogoMark 1.0 LogoMark.qml
 NeonWave 1.0 NeonWave.qml
+MicOrb 1.0 MicOrb.qml
+WaveBars 1.0 WaveBars.qml
+EngineBadge 1.0 EngineBadge.qml
+HeroBanner 1.0 HeroBanner.qml
+ModeSegment 1.0 ModeSegment.qml
+StatusBar 1.0 StatusBar.qml
+StatSpark 1.0 StatSpark.qml
 StepProgress 1.0 StepProgress.qml
