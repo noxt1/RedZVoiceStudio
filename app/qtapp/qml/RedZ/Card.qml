@@ -1,7 +1,7 @@
 import QtQuick
 import RedZ 1.0
 
-/// Карточка: тёмная поверхность с тёплой рамкой, как на референсе.
+/// Карточка: стеклянная поверхность на неоновом фоне, как на референсе.
 /// Дети кладутся внутрь с отступом `padding`.
 Item {
     id: root
@@ -10,8 +10,8 @@ Item {
 
     property int padding: 20
     property int cornerRadius: Theme.radiusCard
-    property color topColor: "#1A202B"
-    property color bottomColor: "#12161E"
+    property color topColor: Theme.cardTop
+    property color bottomColor: Theme.cardBottom
     property color borderColor: Theme.border
     property real borderWidth: 1
 

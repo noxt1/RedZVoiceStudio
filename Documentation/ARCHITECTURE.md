@@ -1,4 +1,4 @@
-# ARCHITECTURE — RedZ Voice Studio
+# ARCHITECTURE — Auraloom
 
 Только подтверждённое кодом и запуском. Проверено 2026-11-16.
 
@@ -155,8 +155,8 @@ STOPPED ──start──► LOADING ──ready──► READY ──stop──
 
 | Что | Где |
 |---|---|
-| workspace | `%LOCALAPPDATA%\RedZVoiceStudio\workspace` (сидинг из ресурсов при старте) |
-| движок | `%LOCALAPPDATA%\RedZVoiceStudio\engine` (venv 3.12, ставится `tools/setup_env.ps1`) |
+| workspace | `%LOCALAPPDATA%\Auraloom\workspace` (сидинг из ресурсов при старте) |
+| движок | `%LOCALAPPDATA%\Auraloom\engine` (venv 3.12, ставится `tools/setup_env.ps1`) |
 | настройки UI | `workspace/ui_settings.json` |
 | свои фразы | `workspace/custom_phrases.json` |
 | профили голоса | `workspace/profiles/<name>/` + активный профиль |

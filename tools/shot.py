@@ -1,4 +1,4 @@
-"""Скриншот окна RedZ Voice Studio (для проверки вёрстки).
+"""Скриншот окна Auraloom (для проверки вёрстки).
 
     python tools\\shot.py [путь-к-файлу.png]
 """
@@ -16,7 +16,7 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
 
-def find_window(needle: str = "RedZ Voice Studio") -> int:
+def find_window(needle: str = "Auraloom") -> int:
     found = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
@@ -74,7 +74,7 @@ def capture(hwnd: int, path: str) -> None:
 
 
 def main() -> None:
-    needle = sys.argv[2] if len(sys.argv) > 2 else "RedZ Voice Studio"
+    needle = sys.argv[2] if len(sys.argv) > 2 else "Auraloom"
     out = sys.argv[1] if len(sys.argv) > 1 else "studio.png"
     hwnd = find_window(needle)
     if not hwnd:

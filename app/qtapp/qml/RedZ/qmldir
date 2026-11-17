@@ -26,4 +26,6 @@ Icon 1.0 Icon.qml
 FlatBorder 1.0 FlatBorder.qml
 Panel 1.0 Panel.qml
 WaveformVisualizer 1.0 WaveformVisualizer.qml
+LogoMark 1.0 LogoMark.qml
+NeonWave 1.0 NeonWave.qml
 StepProgress 1.0 StepProgress.qml

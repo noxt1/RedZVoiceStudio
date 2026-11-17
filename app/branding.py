@@ -12,7 +12,7 @@ from __future__ import annotations
 BRAND_NAME = "Auraloom"               # полное, для заголовка окна
 BRAND_SHORT = "Auraloom"              # крупная надпись в боковом меню
 BRAND_SUB = "Voice Studio"            # подпись под ней
-BRAND_TAGLINE = "Голос · Перевод · Игра"
+BRAND_TAGLINE = "Hear · Translate · Connect"
 ORG_NAME = "Auraloom"
 
 # --- данные ---

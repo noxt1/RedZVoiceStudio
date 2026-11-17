@@ -17,8 +17,8 @@ Item {
         anchors.fill: parent
         radius: Theme.radiusCard
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#1A202B" }
-            GradientStop { position: 1.0; color: "#12161E" }
+            GradientStop { position: 0.0; color: Theme.cardTop }
+            GradientStop { position: 1.0; color: Theme.cardBottom }
         }
         border.color: Theme.border
         border.width: 1
@@ -33,7 +33,7 @@ Item {
             width: 46
             height: 46
             radius: 12
-            color: "#241B10"
+            color: Theme.accentTile
             border.color: Theme.accentDeep
             border.width: 1
             anchors.verticalCenter: parent.verticalCenter

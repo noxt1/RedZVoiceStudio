@@ -176,7 +176,7 @@ Item {
                                 width: 34
                                 height: 34
                                 radius: 9
-                                color: delHover.hovered ? "#3A1B1A" : "transparent"
+                                color: delHover.hovered ? Theme.dangerTile : "transparent"
                                 border.color: Theme.border
                                 border.width: 1
                                 anchors.verticalCenter: parent.verticalCenter

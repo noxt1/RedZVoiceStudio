@@ -214,8 +214,8 @@ Item {
                         enabled: !page.ready
                         opacity: page.ready ? 0.45 : 1.0
                         gradient: Gradient {
-                            GradientStop { position: 0.0; color: "#16341F" }
-                            GradientStop { position: 1.0; color: "#10251A" }
+                            GradientStop { position: 0.0; color: Theme.successTile }
+                            GradientStop { position: 1.0; color: Theme.successTile }
                         }
                         border.color: Theme.success
                         border.width: 1
@@ -234,7 +234,7 @@ Item {
                             Icon { source: "icons/play.svg"; color: Theme.success; size: 16 }
                             Text {
                                 text: "Запустить модель"
-                                color: "#D8F5E3"
+                                color: Theme.textPrimary
                                 font.family: Theme.fontFamilyText
                                 font.pixelSize: 14
                                 font.weight: Theme.weightMedium
@@ -257,8 +257,8 @@ Item {
                         enabled: page.ready
                         opacity: page.ready ? 1.0 : 0.45
                         gradient: Gradient {
-                            GradientStop { position: 0.0; color: "#3A1B1A" }
-                            GradientStop { position: 1.0; color: "#2A1312" }
+                            GradientStop { position: 0.0; color: Theme.dangerTile }
+                            GradientStop { position: 1.0; color: Theme.dangerTile }
                         }
                         border.color: Theme.danger
                         border.width: 1
@@ -277,7 +277,7 @@ Item {
                             Icon { source: "icons/stop.svg"; color: Theme.danger; size: 16 }
                             Text {
                                 text: "Остановить модель"
-                                color: "#F7DEDC"
+                                color: Theme.textPrimary
                                 font.family: Theme.fontFamilyText
                                 font.pixelSize: 14
                                 font.weight: Theme.weightMedium
@@ -315,7 +315,7 @@ Item {
 
                             Rectangle {
                                 width: 40; height: 40; radius: 11
-                                color: "#241B10"
+                                color: Theme.accentTile
                                 border.color: Theme.accentDeep
                                 border.width: 1
                                 Icon {
@@ -453,10 +453,7 @@ Item {
                             width: parent.width
                             height: 62
                             radius: 12
-                            gradient: Gradient {
-                                GradientStop { position: 0.0; color: pttArea.pressed ? Theme.accentBright : "#C79B4E" }
-                                GradientStop { position: 1.0; color: pttArea.pressed ? Theme.accent : "#8A5D1E" }
-                            }
+                            gradient: Theme.gradAccent
                             border.color: Theme.accentBright
                             border.width: pttArea.pressed ? 2 : 1
 
@@ -541,7 +538,7 @@ Item {
 
                             Rectangle {
                                 width: 40; height: 40; radius: 11
-                                color: "#241B10"
+                                color: Theme.accentTile
                                 border.color: Theme.accentDeep
                                 border.width: 1
                                 Icon {
@@ -682,7 +679,7 @@ Item {
                             width: parent.width
                             height: 56
                             radius: 12
-                            color: liveEngine.captureOn ? "#1A2B3B" : "transparent"
+                            color: liveEngine.captureOn ? "#0F1C3F" : "transparent"
                             border.color: liveEngine.captureOn ? Theme.incoming : Theme.borderStrong
                             border.width: 1.5
 
@@ -935,7 +932,7 @@ Item {
 
                     Rectangle {
                         width: 40; height: 40; radius: 11
-                        color: "#241B10"
+                        color: Theme.accentTile
                         border.color: Theme.accentDeep
                         border.width: 1
                         Icon {
@@ -993,8 +990,8 @@ Item {
                 width: parent.width
                 height: parent.height - 96 - 16
                 padding: 22
-                topColor: "#241A0E"
-                bottomColor: "#120E09"
+                topColor: Theme.cardTop
+                bottomColor: Theme.cardBottom
                 borderColor: Theme.accentDeep
 
                 Column {
@@ -1003,10 +1000,8 @@ Item {
 
                     Item { width: 1; height: 6 }
 
-                    Icon {
-                        source: "icons/star.svg"
-                        color: Theme.accent
-                        size: 46
+                    LogoMark {
+                        size: 62
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
@@ -1054,7 +1049,7 @@ Item {
 
                             Rectangle {
                                 width: 20; height: 20; radius: 10
-                                color: "#2A1F0F"
+                                color: Theme.accentTile
                                 border.color: Theme.accentDeep
                                 border.width: 1
                                 Icon {
@@ -1078,11 +1073,10 @@ Item {
 
                     Item { width: 1; height: 1 }
 
-                    Icon {
-                        source: "icons/star.svg"
-                        color: Theme.accent
-                        size: 96
-                        opacity: 0.75
+                    NeonWave {
+                        width: parent.width
+                        height: 88
+                        opacityBoost: 0.9
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 

@@ -1,4 +1,4 @@
-# ROADMAP — RedZ Voice Studio
+# ROADMAP — Auraloom
 
 Статусы: `DONE` (подтверждено), `IN PROGRESS`, `NOT STARTED`, `BLOCKED`.
 Приоритеты: P0 (блокер), P1, P2, P3.

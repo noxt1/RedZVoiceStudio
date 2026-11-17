@@ -1,4 +1,4 @@
-# PRODUCT_SPECIFICATION — RedZ Voice Studio
+# PRODUCT_SPECIFICATION — Auraloom
 
 Актуально на 2026-11-16. Источник истины — код и запуск; документ описывает
 только то, что подтверждено.
@@ -106,7 +106,7 @@ reference» собирает `reference.wav` (до 45 с), «Прослушат�
 
 ## 8. Хранение данных
 
-`%LOCALAPPDATA%\RedZVoiceStudio\`:
+`%LOCALAPPDATA%\Auraloom\`:
 
 | Путь | Содержимое |
 |---|---|

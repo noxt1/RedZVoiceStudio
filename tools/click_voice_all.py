@@ -23,7 +23,7 @@ LOGS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio",
                     "workspace", "logs")
 
 
-def find_window(needle: str = "RedZ Voice Studio") -> int:
+def find_window(needle: str = "Auraloom") -> int:
     found = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 

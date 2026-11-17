@@ -1,4 +1,4 @@
-# RedZ Voice Studio — звуковая панель, твой голос, вывод в микрофон
+# Auraloom — звуковая панель, твой голос, вывод в микрофон
 
 Единое приложение для **RedZ RolePlay** (RedM / FiveM) и любого другого RP:
 31 реплика с мексиканским акцентом и матом, **без упоминаний родителей**
@@ -11,7 +11,7 @@
 ## Запуск
 
 ```powershell
-dist\RedZVoiceStudio.exe
+dist\Auraloom.exe
 ```
 
 Шесть вкладок:
@@ -270,7 +270,7 @@ python tools\compare_expressiveness.py      # сравнить уровни 0/2/
 Torch + coqui-tts весят ~4 ГБ, поэтому в EXE их нет. Движок лежит рядом:
 
 ```
-%LOCALAPPDATA%\RedZVoiceStudio\engine\Scripts\python.exe
+%LOCALAPPDATA%\Auraloom\engine\Scripts\python.exe
 ```
 
 Установить (нужен интернет, ~10 минут, один раз):
@@ -409,17 +409,17 @@ soundboard (VoiceMod, Steinberg и т.п.), который умеет отпра
 
 **Приложение можно открыть только один раз.** Второй запуск покажет
 предупреждение и закроется: два экземпляра делят рабочую папку
-`%LOCALAPPDATA%\RedZVoiceStudio\workspace` и мешают друг другу писать файлы
+`%LOCALAPPDATA%\Auraloom\workspace` и мешают друг другу писать файлы
 (из-за этого раньше вылезал `PermissionError`).
 
 **Если задача упала**, полный трейсбек лежит в
-`%LOCALAPPDATA%\RedZVoiceStudio\workspace\logs\error_*.txt` — в EXE нет
+`%LOCALAPPDATA%\Auraloom\workspace\logs\error_*.txt` — в EXE нет
 консоли, поэтому в журнале видно только обрезанную строку.
 
 **Прогнать озвучку без GUI (для проверки):**
 
 ```powershell
-.\dist\RedZVoiceStudio.exe --diag-voice-all
+.\dist\Auraloom.exe --diag-voice-all
 ```
 
 Задача идёт тем же путём, что и кнопка «Озвучить всё моим голосом»
@@ -437,7 +437,7 @@ soundboard (VoiceMod, Steinberg и т.п.), который умеет отпра
 
 ```powershell
 Remove-Item Env:PYTHONIOENCODING, Env:PYTHONUTF8 -ErrorAction SilentlyContinue
-.\dist\RedZVoiceStudio.exe --diag-voice-all
+.\dist\Auraloom.exe --diag-voice-all
 ```
 
 ## Живой перевод (вкладка 6)
@@ -622,10 +622,10 @@ Discord слышно и тебя по-русски, и перевод по-ис�
 
 | Что | Где |
 |---|---|
-| **Приложение (EXE)** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard\dist\RedZVoiceStudio.exe` |
+| **Приложение (EXE)** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard\dist\Auraloom.exe` |
 | **Исходники проекта** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard\` |
-| **Рабочая папка** (озвучка, записи, референс) | `%LOCALAPPDATA%\RedZVoiceStudio\workspace\` |
-| **Движок XTTS** (torch, модели) | `%LOCALAPPDATA%\RedZVoiceStudio\engine\` |
+| **Рабочая папка** (озвучка, записи, референс) | `%LOCALAPPDATA%\Auraloom\workspace\` |
+| **Движок XTTS** (torch, модели) | `%LOCALAPPDATA%\Auraloom\engine\` |
 | **Архив проекта** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard.zip` |
 
 ### Автопроверка одной командой

@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Window
 import RedZ 1.0
 
-/// Главное окно RedZ Voice Studio (Qt Quick) — по референсу:
+/// Главное окно Auraloom (Qt Quick) — по референсу:
 ///   • слева сайдбар: вывеска приложения + навигация + закатное свечение
 ///   • справа страница (Главная / Голоса / Настройки / История / Живой перевод)
 ///   • снизу общий футер: состояние приложения, ASR · MT · TTS, версия
@@ -69,59 +69,31 @@ Window {
 
                 Column {
                     anchors.centerIn: parent
-                    spacing: 3
+                    spacing: 4
 
-                    Item {
-                        width: 62
-                        height: 62
+                    LogoMark {
+                        size: 66
                         anchors.horizontalCenter: parent.horizontalCenter
-
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: width / 2
-                            color: Theme.accent
-                            opacity: 0.10
-                        }
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: width / 2
-                            color: "transparent"
-                            border.color: Theme.accentDeep
-                            border.width: 1.5
-                        }
-                        Icon {
-                            anchors.centerIn: parent
-                            source: "icons/star.svg"
-                            color: Theme.accent
-                            size: 30
-                        }
                     }
 
-                    Item { width: 1; height: 6 }
+                    Item { width: 1; height: 4 }
 
                     Text {
                         text: brandShort
                         anchors.horizontalCenter: parent.horizontalCenter
-                        color: Theme.accentBright
-                        font.family: Theme.fontFamilyBrand
-                        font.pixelSize: 34
-                        font.weight: Theme.weightBold
-                    }
-                    Text {
-                        text: brandSub
-                        anchors.horizontalCenter: parent.horizontalCenter
                         color: Theme.textPrimary
                         font.family: Theme.fontFamilyBrand
-                        font.pixelSize: 17
-                        font.italic: true
+                        font.pixelSize: 31
+                        font.weight: Theme.weightSemiBold
+                        font.letterSpacing: 0.4
                     }
                     Text {
                         text: brandTagline
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: Theme.textMuted
-                        font.family: Theme.fontFamilyBrand
+                        font.family: Theme.fontFamilyText
                         font.pixelSize: 11
-                        font.italic: true
+                        font.letterSpacing: 0.6
                     }
                 }
             }
@@ -144,25 +116,21 @@ Window {
                         readonly property bool active: window.section === modelData.key
                         property bool hovered: false
 
-                        Rectangle {
+                                                Rectangle {
                             anchors.fill: parent
-                            radius: 10
+                            radius: Theme.radiusControl
                             color: navItem.active ? "transparent"
                                  : (navItem.hovered ? Theme.surface1 : "transparent")
                             gradient: navItem.active ? Theme.gradNavActive : null
-                            border.color: navItem.active ? Theme.accentDeep : "transparent"
+                            border.color: navItem.active ? Theme.accent : "transparent"
                             border.width: navItem.active ? 1 : 0
-                        }
 
-                        Rectangle {
-                            width: 3
-                            height: 20
-                            radius: 2
-                            color: Theme.accent
-                            anchors.left: parent.left
-                            anchors.leftMargin: 2
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: navItem.active
+                            Glow {
+                                anchors.fill: parent
+                                glowColor: Theme.accent
+                                intensity: navItem.active ? 0.5 : 0.0
+                                cornerRadius: Theme.radiusControl
+                            }
                         }
 
                         Row {
@@ -173,7 +141,7 @@ Window {
 
                             Icon {
                                 source: modelData.icon
-                                color: navItem.active ? Theme.accentBright : Theme.textSecondary
+                                color: navItem.active ? "#FFFFFF" : Theme.textSecondary
                                 size: 20
                             }
                             Text {
@@ -210,44 +178,39 @@ Window {
                     anchors.fill: parent
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "transparent" }
-                        GradientStop { position: 0.65; color: "#241708" }
-                        GradientStop { position: 1.0; color: "#33200C" }
+                        GradientStop { position: 0.6; color: "#0C1236" }
+                        GradientStop { position: 1.0; color: "#111A4A" }
                     }
-                    opacity: 0.85
+                    opacity: 0.9
                 }
 
                 Rectangle {
-                    width: 170
-                    height: 170
+                    width: 180
+                    height: 180
                     radius: width / 2
-                    color: Theme.accent
-                    opacity: 0.08
+                    color: Theme.accentCyan
+                    opacity: 0.10
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
-                    anchors.bottomMargin: -60
+                    anchors.bottomMargin: -70
                 }
 
-                Column {
+                NeonWave {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 18
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 2
+                    height: 90
+                    opacityBoost: 0.7
+                }
 
-                    Icon {
-                        source: "icons/star.svg"
-                        color: Theme.accent
-                        size: 18
-                        opacity: 0.85
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-                    Text {
-                        text: "1919 · RedZ RP"
-                        color: Theme.textMuted
-                        font.family: Theme.fontFamilyBrand
-                        font.pixelSize: 11
-                        font.italic: true
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
+                Text {
+                    text: "Auraloom · v" + window.version
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamilyMono
+                    font.pixelSize: 10
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 12
+                    anchors.horizontalCenter: parent.horizontalCenter
                 }
             }
         }
@@ -256,6 +219,32 @@ Window {
     // ==================================================================
     // Содержимое
     // ==================================================================
+    // фирменное свечение и волны под содержимым страницы
+    Item {
+        anchors.left: sidebar.right
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.bottom: footer.top
+        clip: true
+
+        Rectangle {
+            width: 520
+            height: 520
+            radius: width / 2
+            x: parent.width - 260
+            y: -300
+            color: Theme.accent
+            opacity: 0.16
+        }
+
+        NeonWave {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            width: Math.min(760, parent.width * 0.7)
+            height: 230
+        }
+    }
+
     Loader {
         id: pageLoader
         anchors.left: sidebar.right
@@ -263,6 +252,7 @@ Window {
         anchors.right: parent.right
         anchors.bottom: footer.top
         anchors.margins: 18
+        asynchronous: false
 
         source: {
             if (window.section === "voices") return "pages/VoicesPage.qml"

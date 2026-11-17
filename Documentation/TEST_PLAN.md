@@ -1,4 +1,4 @@
-# TEST_PLAN — RedZ Voice Studio
+# TEST_PLAN — Auraloom
 
 Уровни проверок A–E. Для каждого — команда и фактический результат на
 2026-11-16 (Windows, Python 3.14, PySide6 6.12, `main` @ `9fc19e4` + рабочая
@@ -136,7 +136,7 @@ fast/quality/balanced, смены языка собеседника es/en/auto, 
 | Сборка `pyinstaller --clean --noconfirm redz_voice_studio.spec` | PASS (≈1,5 мин) |
 | Артефакт | `dist/RedZVoiceStudio.exe`, 316 482 741 байт (301,8 МБ), onefile |
 | SHA-256 | `b17eaa8c7118970999c210c9331dfa536d906a7058b119aefee92788589c0ba0` |
-| Запуск EXE | PASS — окно «RedZ Voice Studio», `Responding: True`, экран «Модели» отрисован |
+| Запуск EXE | PASS — окно «Auraloom», `Responding: True`, экран «Модели» отрисован |
 | QML внутри бандла | PASS — карточки ASR/MT/TTS, вкладки, статус-бар, боковое меню |
 | Остановка движка из EXE | PASS — «Остановить модели» → «[engine] модели выгружены (RSS=1678 МБ)» |
 | Повторный запуск движка | PASS — «Движок: Готов к работе», RTX 5080, VRAM 5,7/16 ГБ |

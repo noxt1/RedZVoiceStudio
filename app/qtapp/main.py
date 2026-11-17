@@ -1,4 +1,4 @@
-"""Точка входа Qt-интерфейса RedZ Voice Studio.
+"""Точка входа Qt-интерфейса Auraloom.
 
 Запуск:
     python app/qtapp/main.py

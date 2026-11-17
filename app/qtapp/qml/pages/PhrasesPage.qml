@@ -63,7 +63,7 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             radius: 9
-                            color: row.selected ? "#241B10"
+                            color: row.selected ? Theme.accentTile
                                  : (rowHover.hovered ? Theme.surface2 : "transparent")
                             border.color: row.selected ? Theme.accentDeep : "transparent"
                             border.width: row.selected ? 1 : 0
