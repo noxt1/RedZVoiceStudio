@@ -139,6 +139,11 @@ PEER_LANG_MIN_CONF = float(os.environ.get("REDZ_PEER_LANG_CONF", "0.60"))
 # Сколько цепочек перевода держать в памяти: 2 — переключение языка
 # мгновенное, но +~600 МБ RAM; 1 — экономно, с перезагрузкой модели.
 MT_CACHE_CHAINS = max(1, int(os.environ.get("REDZ_MT_CACHE_CHAINS", "2")))
+# Замер на 12 реальных фразах (build/quality_sweep): для обратного перевода
+# (собеседник -> RU) beam=4 дал chrF 36,9 против 30,7 у greedy, ценой
+# +150 мс — там это не критично. Для прямого (RU -> ES) greedy лучше
+# (41,6 против 37,8), поэтому beam включается только для обратного.
+MT_BEAMS_REVERSE = max(1, int(os.environ.get("REDZ_MT_BEAMS_REVERSE", "4")))
 
 
 def _hf_hub_dir() -> str:
@@ -1231,9 +1236,32 @@ class Engine:
             audio_path=[reference])
         log(f"[engine] XTTS + кэш голоса за {(time.time() - t0) * 1000:.0f} мс, "
             f"RSS={_rss_mb():.0f} МБ")
+        self._warmup_tts()
+
+    def _warmup_tts(self) -> None:
+        """Прогреть XTTS одним выброшенным синтезом.
+
+        Замер (build/quality_sweep.py): первый синтез после загрузки
+        выдавал неразборчивую фразу (WER 0.86), последующие — 0.14–0.2,
+        и первый чанк ждал 5 с вместо ~1 с. Прогрев платит за это время
+        на загрузке, а не в живом разговоре.
+        """
+        t0 = time.time()
+        try:
+            lang = xtts_language(self.lang) if self.lang else "es"
+            for _chunk in self.tts.inference_stream(
+                    "Hola, ¿qué tal?", lang, self.gpt_latent, self.spk_emb,
+                    stream_chunk_size=self.stream_chunk,
+                    overlap_wav_len=2048,
+                    temperature=0.75, top_p=0.86, top_k=50,
+                    speed=1.0, repetition_penalty=10.0):
+                break   # достаточно первого чанка
+            log(f"[engine] XTTS прогрет за {(time.time() - t0) * 1000:.0f} мс")
+        except Exception as exc:  # noqa: BLE001
+            log(f"[engine] прогрев XTTS не удался: {type(exc).__name__}: {exc}")
 
     # ---------- перевод текста ----------
-    def _run_chain(self, text: str, chain: list[tuple]) -> str:
+    def _run_chain(self, text: str, chain: list[tuple], beam: int = 1) -> str:
         """Прогнать текст по цепочке моделей перевода.
 
         Элемент цепочки — пара (токенизатор, модель) либо
@@ -1254,7 +1282,8 @@ class Engine:
                 except Exception:
                     pass
             with torch.inference_mode():
-                out = model.generate(**batch, max_new_tokens=128, num_beams=1,
+                out = model.generate(**batch, max_new_tokens=128,
+                                     num_beams=max(1, int(beam)),
                                      **gen_kwargs)
             text = tok.batch_decode(out, skip_special_tokens=True)[0].strip()
             # Мультиязычная модель оставляет префикс цели — убираем
@@ -1287,7 +1316,7 @@ class Engine:
         if not chain:
             return ""
         try:
-            return self._run_chain(text, chain)
+            return self._run_chain(text, chain, beam=MT_BEAMS_REVERSE)
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] перевод {src}->ru не удался: "
                 f"{type(exc).__name__}: {exc}")
@@ -1319,7 +1348,7 @@ class Engine:
         if not chain:
             return en
         try:
-            return self._run_chain(en, chain)
+            return self._run_chain(en, chain, beam=MT_BEAMS_REVERSE)
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] en->ru не удался: {exc}")
             return en
