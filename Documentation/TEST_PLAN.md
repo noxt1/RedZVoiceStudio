@@ -12,7 +12,7 @@
 | Проверка | Команда | Результат |
 |---|---|---|
 | Компиляция Python | `python -m compileall -q app` | PASS (без ошибок) |
-| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 134 теста (вкл. 3 в `test_mt_quality.py`) |
+| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 148 тестов (вкл. 3 в `test_mt_quality.py`, 5 в `test_mt_cache_glossary.py`, 6 в `test_history_store.py`) |
 | QML-линт | `pyside6-qmllint -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/RedZ/*.qml` | PASS — 0 ошибок (только Info/Warning) |
 | Аудит API QML→Python | обход всех `appState.*`, `liveEngine.*`, `voiceController.*`, `*Model.*` в QML и `hasattr` на живых объектах | PASS — 74 обращения, 0 отсутствующих |
 | Аудит сигналов | AST: сравнение арности `Signal(...)` и `.emit(...)` | PASS — 0 расхождений (было 2, исправлено) |
@@ -43,6 +43,9 @@
 | Сценарий | Как проверялось | Результат |
 |---|---|---|
 | Запуск интерфейса | `test_launch.py`, скриншоты разделов | PASS |
+| Кэш переводов | два одинаковых `translate_text` на живой модели | PASS — 311 мс → 0,0 мс, `cache_hits=1`; тесты на границы и ключ языка |
+| Глоссарий терминов | `translate_to_ru` en→ru с включённым `glossary.py` | PASS — термины на месте («Блэкуотер», «Артур Морган»); метка `⟦G0⟧` отбракована — opus-mt её искажает |
+| История на диске и экспорт | `tests/test_history_store.py` (tempfile), кнопки в UI | PASS — 6 тестов; отбрасывание старых записей, битые строки, JSON/TXT |
 | Клавиатурная навигация | `tools/nav_key_check.py`: Tab → Down ×2 → Enter, затем Up → Space | PASS — home → voices → live, QTest в offscreen |
 | «Голос»: панель инструментов в 1280 px | скриншот после разбивки на два ряда | PASS — поле имени профиля и «Создать профиль» видны целиком, `shots/voices_1280x840.png` |
 | «История» с записями | `tools/history_shot.py` наполняет модель четырьмя репликами | PASS — карточки, направления (RU→ES / ES→RU), время, действия; `shots/history_filled_1280x840.png`, `shots/history_filled_1920x1080.png` |

@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from collections import OrderedDict
 import queue
 import shutil
 import subprocess
@@ -54,6 +55,12 @@ try:
     import model_registry as mreg
 except Exception:  # noqa: BLE001
     mreg = None
+
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import glossary as glos
+except Exception:  # noqa: BLE001
+    glos = None
 
 
 def _lang_info(code: str) -> dict:
@@ -379,6 +386,15 @@ class Engine:
         # Кэш моделей перевода: код -> (токенизатор, модель).
         # Держим не больше двух (текущий + испанский), чтобы не съедать RAM.
         self._mt_cache: dict[str, list] = {}
+        # Кэш готовых переводов (ROADMAP 4.5): повторная фраза не гоняет
+        # модель заново. Ключ — (направление, язык, текст), значение — перевод.
+        self._text_cache: "OrderedDict[tuple, str]" = OrderedDict()
+        self._text_cache_max = 512
+        self._text_cache_lock = threading.Lock()
+        self.cache_hits = 0
+        self.cache_misses = 0
+        # Глоссарий терминов (ROADMAP 4.6–4.7); загружается лениво.
+        self.glossary = None
         # Piper-озвучка для языков, которых нет в XTTS (например, грузинский).
         # Кэш: путь к .onnx -> PiperVoice
         self._piper_cache: dict[str, object] = {}
@@ -1261,7 +1277,63 @@ class Engine:
             log(f"[engine] прогрев XTTS не удался: {type(exc).__name__}: {exc}")
 
     # ---------- перевод текста ----------
-    def _run_chain(self, text: str, chain: list[tuple], beam: int = 1) -> str:
+    def _ensure_state(self) -> None:
+        """Доставить поля кэша/глоссария, если объект создан без __init__.
+
+        Нужно тестам и любым внешним сборкам Engine.__new__(...).
+        """
+        if not hasattr(self, "_text_cache"):
+            self._text_cache = OrderedDict()
+        if not hasattr(self, "_text_cache_lock"):
+            self._text_cache_lock = threading.Lock()
+        if not hasattr(self, "_text_cache_max"):
+            self._text_cache_max = 512
+        if not hasattr(self, "cache_hits"):
+            self.cache_hits = 0
+        if not hasattr(self, "cache_misses"):
+            self.cache_misses = 0
+        if not hasattr(self, "glossary"):
+            self.glossary = None
+
+    def _glossary(self):
+        """Глоссарий: один раз читаем файл, дальше держим в памяти."""
+        self._ensure_state()
+        if self.glossary is None:
+            if glos is None:
+                self.glossary = False
+            else:
+                try:
+                    glos.ensure_file()
+                    self.glossary = glos.Glossary.load()
+                    log(f"[engine] глоссарий: терминов {len(self.glossary.entries)}")
+                except Exception as exc:  # noqa: BLE001
+                    log(f"[engine] глоссарий не загружен: {exc}")
+                    self.glossary = False
+        return self.glossary or None
+
+    def _cache_get(self, key: tuple) -> str | None:
+        self._ensure_state()
+        with self._text_cache_lock:
+            val = self._text_cache.get(key)
+            if val is None:
+                self.cache_misses += 1
+                return None
+            self._text_cache.move_to_end(key)
+            self.cache_hits += 1
+            return val
+
+    def _cache_put(self, key: tuple, value: str) -> None:
+        if not value:
+            return
+        self._ensure_state()
+        with self._text_cache_lock:
+            self._text_cache[key] = value
+            self._text_cache.move_to_end(key)
+            while len(self._text_cache) > self._text_cache_max:
+                self._text_cache.popitem(last=False)
+
+    def _run_chain(self, text: str, chain: list[tuple], beam: int = 1,
+                   dst: str = "") -> str:
         """Прогнать текст по цепочке моделей перевода.
 
         Элемент цепочки — пара (токенизатор, модель) либо
@@ -1269,6 +1341,11 @@ class Engine:
         мультиязычных моделей (opus-mt-en-mul): >>kat<< = грузинский.
         """
         import torch
+        # Имена и термины прячем за метками, чтобы модель их не переводила
+        used: list[dict] = []
+        g = self._glossary()
+        if g is not None:
+            text, used = g.protect(text)
         for item in chain:
             tok, model = item[0], item[1]
             target = item[2] if len(item) > 2 else None
@@ -1289,17 +1366,24 @@ class Engine:
             # Мультиязычная модель оставляет префикс цели — убираем
             if target and text.startswith(target.strip(">")):
                 text = text.split(None, 1)[1] if " " in text else ""
+        if used:
+            text = g.restore(text, used, dst)
         return text
 
     def translate_text(self, ru: str) -> str:
         if not ru.strip():
             return ""
+        key = ("out", self.lang, ru.strip())
+        hit = self._cache_get(key)
+        if hit is not None:
+            return hit
         chain = self._mt_for(self.lang)
-        text = self._run_chain(ru, chain)
+        text = self._run_chain(ru, chain, dst=self.lang)
         # Олдвест: это английский, переписанный словами ковбойской речи.
         # Лишней модели и задержки это не добавляет.
         if self.lang == "ow" and voice_lang is not None:
             text = voice_lang.to_oldwest(text)
+        self._cache_put(key, text)
         return text
 
     def translate_to_ru(self, text: str, src: str) -> str:
@@ -1312,15 +1396,21 @@ class Engine:
         """
         if not text.strip() or src in ("", "auto", "ru"):
             return text
+        key = ("rev", src, text.strip())
+        hit = self._cache_get(key)
+        if hit is not None:
+            return hit
         chain = self._mt_reverse(src)
         if not chain:
             return ""
         try:
-            return self._run_chain(text, chain, beam=MT_BEAMS_REVERSE)
+            out = self._run_chain(text, chain, beam=MT_BEAMS_REVERSE, dst="ru")
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] перевод {src}->ru не удался: "
                 f"{type(exc).__name__}: {exc}")
             return ""
+        self._cache_put(key, out)
+        return out
 
     def _translate_peer_to_ru(self, text: str, src: str,
                               pcm_bytes: bytes, sr: int) -> str:
@@ -1348,7 +1438,7 @@ class Engine:
         if not chain:
             return en
         try:
-            return self._run_chain(en, chain, beam=MT_BEAMS_REVERSE)
+            return self._run_chain(en, chain, beam=MT_BEAMS_REVERSE, dst="ru")
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] en->ru не удался: {exc}")
             return en

@@ -268,17 +268,28 @@ class SampleModel(QAbstractListModel):
 # ======================================================================
 # Модель истории переводов
 # ======================================================================
+# История переживает перезапуск (ROADMAP 8.3–8.4): простой jsonl в рабочей
+# папке. Старше HISTORY_RETENTION_DAYS при загрузке отбрасываем.
+HISTORY_RETENTION_DAYS = 30
+
+
+def history_path() -> str:
+    return os.path.join(sp.workspace(), "history.jsonl")
+
+
 class HistoryModel(QAbstractListModel):
-    """История переводов сессии."""
+    """История переводов: сессия + сохранённые записи за 30 дней."""
 
     RuRole = Qt.UserRole + 1
     EsRole = Qt.UserRole + 2
     DirRole = Qt.UserRole + 3
     TimeRole = Qt.UserRole + 4
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, path: str | None = None) -> None:
         super().__init__(parent)
         self._items: list[dict] = []
+        self._path = path or history_path()
+        self._load()
 
     def roleNames(self) -> dict:
         return {
@@ -305,19 +316,86 @@ class HistoryModel(QAbstractListModel):
             return it["time"]
         return None
 
+    # ---------- хранение ----------
+    def _load(self) -> None:
+        """Прочитать историю с диска и отбросить устаревшее."""
+        import json
+        cutoff = time.time() - HISTORY_RETENTION_DAYS * 86400
+        rows: list[dict] = []
+        try:
+            with open(self._path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        it = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(it, dict) or not it.get("ru"):
+                        continue
+                    ts = float(it.get("ts") or 0)
+                    if ts and ts < cutoff:
+                        continue
+                    rows.append({
+                        "ru": it["ru"],
+                        "es": it.get("es") or "—",
+                        "dir": "out" if it.get("dir") == "out" else "in",
+                        "ts": ts,
+                        "time": time.strftime("%H:%M:%S", time.localtime(ts))
+                        if ts else str(it.get("time") or ""),
+                    })
+        except FileNotFoundError:
+            return
+        except Exception:  # noqa: BLE001
+            return
+        if rows:
+            self.beginResetModel()
+            self._items = rows[-500:]
+            self.endResetModel()
+
+    def _append_file(self, item: dict) -> None:
+        import json
+        try:
+            os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
+            with open(self._path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "ts": item["ts"], "dir": item["dir"],
+                    "ru": item["ru"], "es": item["es"],
+                }, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _rewrite_file(self) -> None:
+        import json
+        try:
+            os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
+            with open(self._path, "w", encoding="utf-8") as fh:
+                for it in self._items:
+                    fh.write(json.dumps({
+                        "ts": it["ts"], "dir": it["dir"],
+                        "ru": it["ru"], "es": it["es"],
+                    }, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
     @Slot(str, str, str)
     def add(self, direction: str, ru: str, es: str) -> None:
         if not ru:
             return
-        row = len(self._items)
-        self.beginInsertRows(QModelIndex(), row, row)
-        self._items.append({
+        ts = time.time()
+        item = {
             "ru": ru,
             "es": es or "—",
             "dir": "out" if direction == "out" else "in",
-            "time": time.strftime("%H:%M:%S"),
-        })
+            "ts": ts,
+            "time": time.strftime("%H:%M:%S", time.localtime(ts)),
+        }
+        row = len(self._items)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self._items.append(item)
         self.endInsertRows()
+        self._append_file(item)
 
     @Slot(int)
     def removeAt(self, row: int) -> None:
@@ -326,16 +404,50 @@ class HistoryModel(QAbstractListModel):
         self.beginRemoveRows(QModelIndex(), row, row)
         self._items.pop(row)
         self.endRemoveRows()
+        self._rewrite_file()
 
     @Slot()
     def clear(self) -> None:
         self.beginResetModel()
         self._items.clear()
         self.endResetModel()
+        self._rewrite_file()
 
     @Slot(result=int)
     def count(self) -> int:
         return len(self._items)
+
+    # ---------- экспорт (ROADMAP 8.8) ----------
+    def _export_path(self, ext: str) -> str:
+        d = os.path.join(sp.workspace(), "exports")
+        os.makedirs(d, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        return os.path.join(d, f"history_{stamp}.{ext}")
+
+    @Slot(result=str)
+    def exportJson(self) -> str:
+        import json
+        try:
+            path = self._export_path("json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump([{k: it[k] for k in ("ts", "dir", "ru", "es")}
+                           for it in self._items], fh,
+                          ensure_ascii=False, indent=2)
+            return path
+        except Exception:  # noqa: BLE001
+            return ""
+
+    @Slot(result=str)
+    def exportTxt(self) -> str:
+        try:
+            path = self._export_path("txt")
+            with open(path, "w", encoding="utf-8") as fh:
+                for it in self._items:
+                    arrow = "RU -> ES" if it["dir"] == "out" else "ES -> RU"
+                    fh.write(f"[{it['time']}] {arrow}: {it['ru']} | {it['es']}\n")
+            return path
+        except Exception:  # noqa: BLE001
+            return ""
 
 
 # ======================================================================

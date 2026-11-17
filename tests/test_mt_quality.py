@@ -23,7 +23,7 @@ class MtBeamPolicy(unittest.TestCase):
         eng.lang = "es"
         self.calls = []
 
-        def run_chain(text, chain, beam=1):
+        def run_chain(text, chain, beam=1, dst=""):
             self.calls.append(beam)
             return f"<{text}>"
 

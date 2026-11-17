@@ -5,6 +5,9 @@ import RedZ 1.0
 Item {
     id: page
 
+    /// Куда сохранился последний экспорт (пусто — ничего не сохраняли).
+    property string exportNote: ""
+
     TextEdit {
         id: clip
         visible: false
@@ -233,7 +236,7 @@ Item {
 
                 Card {
                     width: parent.width
-                    height: 170
+                    height: 268
                     padding: 16
 
                     Column {
@@ -256,14 +259,50 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: "История хранится в памяти текущей сессии."
+                            text: "Сохраняется между запусками, хранится 30 дней."
                             wrapMode: Text.WordWrap
                             color: Theme.textMuted
                             font.family: Theme.fontFamilyText
                             font.pixelSize: 11
                         }
 
-                        Item { width: 1; height: 1 }
+                        Row {
+                            width: parent.width
+                            spacing: 8
+
+                            AppButton {
+                                width: (parent.width - 8) / 2
+                                controlHeight: 30
+                                text: "Экспорт JSON"
+                                flat: true
+                                enabled: historyModel.count() > 0
+                                onClicked: {
+                                    var p = historyModel.exportJson()
+                                    page.exportNote = p !== "" ? ("сохранено: " + p) : "не удалось сохранить"
+                                }
+                            }
+                            AppButton {
+                                width: (parent.width - 8) / 2
+                                controlHeight: 30
+                                text: "Экспорт TXT"
+                                flat: true
+                                enabled: historyModel.count() > 0
+                                onClicked: {
+                                    var p = historyModel.exportTxt()
+                                    page.exportNote = p !== "" ? ("сохранено: " + p) : "не удалось сохранить"
+                                }
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            visible: page.exportNote !== ""
+                            text: page.exportNote
+                            elide: Text.ElideMiddle
+                            color: Theme.success
+                            font.family: Theme.fontFamilyMono
+                            font.pixelSize: 10
+                        }
 
                         AppButton {
                             width: parent.width
@@ -272,14 +311,17 @@ Item {
                             iconSource: "icons/trash.svg"
                             flat: true
                             enabled: historyModel.count() > 0
-                            onClicked: historyModel.clear()
+                            onClicked: {
+                                historyModel.clear()
+                                page.exportNote = ""
+                            }
                         }
                     }
                 }
 
                 Card {
                     width: parent.width
-                    height: parent.height - 184
+                    height: parent.height - 282
                     padding: 16
 
                     Column {
