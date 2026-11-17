@@ -1,27 +1,37 @@
 import QtQuick
 import RedZ 1.0
 
-/// Модели — единый раздел управления моделями (ASR / перевод / синтез)
-/// и языковыми пакетами. Данные целиком приходят из движка: ничего
-/// фиктивного здесь не создаётся.
+/// Модели и языки — по композиции референса «Models & Languages»:
+///   • шапка с поиском
+///   • сегменты ASR / Перевод / TTS / Языки
+///   • карточки моделей: иконка, статус, описание, языки, размеры, действия
+///   • справа: состояние моделей, быстрые действия, движок
+/// Все данные — из движка, ничего фиктивного.
 Item {
     id: page
 
-    property string tab: "models"        // models | packs
-    property string typeFilter: "asr"    // asr | mt | tts
-    property int selectedPack: -1
+    property string tab: "asr"          // asr | mt | tts | packs
+    property string query: ""
+    // растёт при каждом обновлении каталога: заставляет пересчитать списки
+    property int revision: 0
 
     readonly property var typeItems: [
-        { "key": "asr", "label": "Распознавание" },
-        { "key": "mt", "label": "Перевод" },
-        { "key": "tts", "label": "Синтез" }
+        { "key": "asr", "label": "ASR", "sub": "Распознавание", "icon": "icons/wave.svg" },
+        { "key": "mt", "label": "Перевод", "sub": "Машинный перевод", "icon": "icons/translate.svg" },
+        { "key": "tts", "label": "TTS", "sub": "Синтез речи", "icon": "icons/volume.svg" },
+        { "key": "packs", "label": "Языки", "sub": "Языковые пакеты", "icon": "icons/layers.svg" }
     ]
 
     function items() {
+        var rev = page.revision   // зависимость биндинга от обновлений
         var out = []
         var cat = liveEngine.catalog
         for (var i = 0; i < cat.length; i++) {
-            if (cat[i].type === page.typeFilter) out.push(cat[i])
+            var m = cat[i]
+            if (m.type !== page.tab) continue
+            if (page.query !== ""
+                    && String(m.name).toLowerCase().indexOf(page.query.toLowerCase()) < 0) continue
+            out.push(m)
         }
         return out
     }
@@ -46,14 +56,9 @@ Item {
             if (d.percent > 0) s += " " + d.percent + "%"
             return s
         }
-        return m.state
-    }
-
-    function typeLabel(t) {
-        if (t === "asr") return "ASR"
-        if (t === "mt") return "Перевод"
-        if (t === "tts") return "TTS"
-        return t
+        if (m.state === "READY") return "Готова"
+        if (m.installed) return "На диске"
+        return "Не установлена"
     }
 
     function langText(list) {
@@ -64,6 +69,12 @@ Item {
         var s = names.join(", ")
         if (list.length > max) s += " … (+" + (list.length - max) + ")"
         return s
+    }
+
+    function sizeText(mb) {
+        if (!mb || mb <= 0) return "—"
+        if (mb >= 1024) return (mb / 1024).toFixed(1) + " ГБ"
+        return Math.round(mb) + " МБ"
     }
 
     function packPill(status) {
@@ -87,238 +98,388 @@ Item {
         return parts[0] + " → " + parts[1]
     }
 
+    function verifyAll() {
+        var cat = liveEngine.catalog
+        for (var i = 0; i < cat.length; i++) {
+            if (cat[i].installed) liveEngine.verifyModel(cat[i].id)
+        }
+    }
+
+    function downloadMissing() {
+        var cat = liveEngine.catalog
+        for (var i = 0; i < cat.length; i++) {
+            if (!cat[i].installed && !page.downloadOf(cat[i].id)) {
+                liveEngine.downloadModel(cat[i].id)
+            }
+        }
+    }
+
+    function installedCount() {
+        var rev = page.revision
+        var n = 0
+        var cat = liveEngine.catalog
+        for (var i = 0; i < cat.length; i++) if (cat[i].installed) n++
+        return n
+    }
+
     Component.onCompleted: {
         liveEngine.requestCatalog()
         liveEngine.requestPacks()
     }
 
+    // Каталог приходит от движка асинхронно: страница может открыться раньше,
+    // чем движок готов — тогда запрос уходит в пустоту. Повторяем по READY.
+    Connections {
+        target: liveEngine
+
+        function onStateChanged(state) {
+            if (state === "READY") {
+                liveEngine.requestCatalog()
+                liveEngine.requestPacks()
+            }
+        }
+
+        function onCatalogChanged() { page.revision++ }
+        function onPacksChanged() { page.revision++ }
+        function onDownloadsChanged() { page.revision++ }
+    }
+
     Column {
         anchors.fill: parent
-        spacing: 16
+        spacing: 14
 
-        PageTitle {
+        // ---------------- шапка ----------------
+        Item {
             width: parent.width
-            title: "Модели и языки"
-            subtitle: "Реальные модели на диске: установка, проверка, выбор"
-            iconSource: "icons/layers.svg"
-        }
-
-        Row {
-            width: parent.width
-            spacing: 10
-
-            AppButton {
-                text: "Модели"
-                flat: true
-                highlighted: page.tab === "models"
-                controlHeight: 34
-                onClicked: { page.tab = "models"; page.selectedPack = -1 }
-            }
-            AppButton {
-                text: "Языковые пакеты"
-                flat: true
-                highlighted: page.tab === "packs"
-                controlHeight: 34
-                onClicked: { page.tab = "packs"; liveEngine.requestPacks() }
-            }
-
-            Item { width: 12; height: 1 }
-
-            AppButton {
-                text: liveEngine.modelsLoaded ? "Остановить модели" : "Загрузить модели"
-                flat: true
-                controlHeight: 34
-                iconSource: liveEngine.modelsLoaded ? "icons/stop.svg" : "icons/play.svg"
-                onClicked: liveEngine.modelsLoaded ? liveEngine.unloadModels()
-                                                  : liveEngine.loadModels()
-            }
-            AppButton {
-                text: "Обновить"
-                flat: true
-                controlHeight: 34
-                iconSource: "icons/refresh.svg"
-                onClicked: {
-                    liveEngine.requestCatalog()
-                    liveEngine.requestPacks()
-                    liveEngine.requestModels()
-                }
-            }
-        }
-
-        // ---------------- модели ----------------
-        Column {
-            width: parent.width
-            height: parent.height - 92 - 16 - 34 - 16
-            spacing: 12
-            visible: page.tab === "models"
+            height: 84
 
             Row {
-                width: parent.width
-                spacing: 8
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 16
 
-                Repeater {
-                    model: page.typeItems
-                    delegate: AppButton {
-                        text: modelData.label
-                        flat: true
-                        highlighted: page.typeFilter === modelData.key
-                        controlHeight: 30
-                        onClicked: page.typeFilter = modelData.key
+                Rectangle {
+                    width: 56
+                    height: 56
+                    radius: 16
+                    color: Theme.accentTile
+                    border.width: 1
+                    border.color: Theme.accentDeep
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Glow {
+                        anchors.fill: parent
+                        glowColor: Theme.accent
+                        intensity: 0.45
+                        cornerRadius: 16
+                    }
+
+                    Icon {
+                        anchors.centerIn: parent
+                        source: "icons/layers.svg"
+                        color: Theme.accentCyan
+                        size: 26
+                    }
+                }
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 2
+
+                    Text {
+                        text: "Модели и языки"
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamilyText
+                        font.pixelSize: 27
+                        font.weight: Theme.weightSemiBold
+                    }
+                    Text {
+                        text: "Модели распознавания, перевода и синтеза — установка, проверка, выбор"
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamilyText
+                        font.pixelSize: 12
                     }
                 }
             }
 
+            AppField {
+                width: 300
+                fieldHeight: 40
+                anchors.right: parent.right
+                anchors.rightMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                placeholderText: "Поиск моделей…"
+                onTextEdited: (t) => page.query = t
+            }
+        }
+
+        // ---------------- сегменты ----------------
+        Row {
+            width: parent.width
+            height: 58
+            spacing: 10
+
+            Repeater {
+                model: page.typeItems
+
+                delegate: Item {
+                    width: (parent.width - 30) / 4
+                    height: parent.height
+
+                    readonly property bool active: page.tab === modelData.key
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Theme.radiusInner
+                        gradient: active ? Theme.gradAccent : null
+                        color: active ? "transparent" : "#10163A"
+                        border.width: 1
+                        border.color: active ? Theme.accent : Theme.border
+
+                        Behavior on color { ColorAnimation { duration: Theme.motionFast } }
+                    }
+
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 10
+
+                        Icon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: modelData.icon
+                            color: active ? "#FFFFFF" : Theme.accentCyan
+                            size: 18
+                        }
+
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 0
+
+                            Text {
+                                text: modelData.label
+                                color: active ? "#FFFFFF" : Theme.textPrimary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 13
+                                font.weight: Theme.weightSemiBold
+                            }
+                            Text {
+                                text: modelData.sub
+                                color: active ? "#E7E3FF" : Theme.textMuted
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 10
+                            }
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            page.tab = modelData.key
+                            if (modelData.key === "packs") liveEngine.requestPacks()
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------- контент ----------------
+        Row {
+            width: parent.width
+            height: parent.height - 84 - 58 - 28
+            spacing: 14
+
+            // -------- список --------
             Flickable {
-                width: parent.width
-                height: parent.height - 42
+                width: parent.width - 334
+                height: parent.height
                 clip: true
                 contentWidth: width
-                contentHeight: modelColumn.height
+                contentHeight: listColumn.height
+                contentY: 0
                 boundsBehavior: Flickable.StopAtBounds
 
                 Column {
-                    id: modelColumn
+                    id: listColumn
                     width: parent.width
                     spacing: 12
 
+                    // ---------- модели ----------
                     Text {
                         width: parent.width
-                        visible: page.items().length === 0
+                        visible: page.tab !== "packs" && page.items().length === 0
                         text: appState.engineState === "STOPPED"
-                              ? "Движок не запущен — запусти его, чтобы увидеть модели."
-                              : "Нет данных каталога."
+                              ? "Движок не запущен — запустите его, чтобы увидеть модели."
+                              : (appState.engineState !== "READY"
+                                 ? "Каталог загружается вместе с движком…"
+                                 : "Ничего не найдено.")
                         color: Theme.textMuted
                         font.family: Theme.fontFamilyText
                         font.pixelSize: 12
-                        wrapMode: Text.WordWrap
                     }
 
                     Repeater {
-                        model: page.items()
+                        model: page.tab === "packs" ? [] : page.items()
 
                         delegate: Card {
-                            width: modelColumn.width
-                            height: contentColumn.implicitHeight + 36
-                            padding: 18
+                            width: listColumn.width
+                            height: 138
+                            padding: 16
 
-                            Column {
-                                id: contentColumn
-                                width: parent.width
-                                spacing: 8
+                            Row {
+                                anchors.fill: parent
+                                spacing: 14
 
-                                Row {
-                                    width: parent.width
-                                    spacing: 10
+                                // иконка типа
+                                Rectangle {
+                                    width: 66
+                                    height: 66
+                                    radius: 16
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: Theme.accentTile
+                                    border.width: 1
+                                    border.color: Theme.accentDeep
+
+                                    Icon {
+                                        anchors.centerIn: parent
+                                        source: modelData.type === "asr" ? "icons/wave.svg"
+                                              : (modelData.type === "mt" ? "icons/translate.svg"
+                                                                         : "icons/volume.svg")
+                                        color: Theme.accentCyan
+                                        size: 28
+                                    }
+                                }
+
+                                // описание
+                                Column {
+                                    width: parent.width - 66 - 14 - 150 - 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 4
+
+                                    Row {
+                                        width: parent.width
+                                        spacing: 8
+
+                                        Text {
+                                            text: modelData.name
+                                            elide: Text.ElideRight
+                                            width: Math.min(implicitWidth, parent.width - 130)
+                                            color: Theme.textPrimary
+                                            font.family: Theme.fontFamilyText
+                                            font.pixelSize: 15
+                                            font.weight: Theme.weightSemiBold
+                                        }
+                                        StatusPill {
+                                            text: page.stateText(modelData)
+                                            pillState: page.pillState(modelData.state)
+                                            pillHeight: 22
+                                        }
+                                    }
 
                                     Text {
-                                        text: modelData.name
-                                        color: Theme.textPrimary
-                                        font.family: Theme.fontFamilyText
-                                        font.pixelSize: 16
-                                        font.weight: Theme.weightSemiBold
-                                    }
-                                    StatusPill {
-                                        text: page.typeLabel(modelData.type)
-                                        pillState: "idle"
-                                    }
-                                    StatusPill {
-                                        text: page.stateText(modelData)
-                                        pillState: page.pillState(modelData.state)
-                                    }
-                                    Item { width: 1; height: 1 }
-                                    Text {
-                                        text: modelData.installed
-                                              ? ("на диске " + modelData.disk_mb + " МБ")
-                                              : ("нужно скачать ~" + modelData.size_mb + " МБ")
-                                        color: Theme.textMuted
+                                        width: parent.width
+                                        text: modelData.description
+                                        elide: Text.ElideRight
+                                        color: Theme.textSecondary
                                         font.family: Theme.fontFamilyText
                                         font.pixelSize: 11
                                     }
+
+                                    // чипы языков
+                                    Row {
+                                        spacing: 4
+                                        height: 18
+
+                                        Repeater {
+                                            model: (modelData.languages || []).slice(0, 6)
+
+                                            delegate: Rectangle {
+                                                height: 16
+                                                width: chipText.implicitWidth + 12
+                                                radius: 8
+                                                color: "#161D48"
+                                                border.width: 1
+                                                border.color: Theme.border
+
+                                                Text {
+                                                    id: chipText
+                                                    anchors.centerIn: parent
+                                                    text: modelData
+                                                    color: Theme.textSecondary
+                                                    font.family: Theme.fontFamilyMono
+                                                    font.pixelSize: 9
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: "· " + modelData.license
+                                            color: Theme.textMuted
+                                            font.family: Theme.fontFamilyText
+                                            font.pixelSize: 10
+                                        }
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: "Скачать " + page.sizeText(modelData.size_mb)
+                                              + "  ·  На диске " + page.sizeText(modelData.disk_mb)
+                                              + "  ·  RAM " + page.sizeText(modelData.ram_mb)
+                                              + (modelData.vram_mb > 0
+                                                 ? "  ·  VRAM " + page.sizeText(modelData.vram_mb) : "")
+                                              + (modelData.direction
+                                                 ? "  ·  " + page.directionText(modelData.direction) : "")
+                                        color: Theme.textMuted
+                                        font.family: Theme.fontFamilyMono
+                                        font.pixelSize: 10
+                                    }
                                 }
 
-                                Text {
-                                    width: parent.width
-                                    text: modelData.description
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 12
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: modelData.developer + " · " + modelData.source
-                                          + " · лицензия " + modelData.license
-                                          + " · RAM " + modelData.ram_mb + " МБ"
-                                          + (modelData.vram_mb > 0
-                                             ? (" · VRAM " + modelData.vram_mb + " МБ") : "")
-                                          + " · " + (modelData.devices || []).join("/")
-                                    color: Theme.textMuted
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 11
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: (modelData.direction
-                                           ? ("Направление: " + page.directionText(modelData.direction) + " · ")
-                                           : "")
-                                          + "Языки: " + page.langText(modelData.languages)
-                                    color: Theme.textMuted
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 11
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Row {
-                                    spacing: 8
+                                // действия
+                                Column {
+                                    width: 136
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 6
 
                                     AppButton {
-                                        visible: !modelData.installed
-                                                 && !page.downloadOf(modelData.id)
+                                        width: parent.width
+                                        controlHeight: 32
+                                        visible: !modelData.installed && !page.downloadOf(modelData.id)
                                         text: "Скачать"
-                                        flat: true
-                                        controlHeight: 30
                                         iconSource: "icons/arrow-down.svg"
                                         onClicked: liveEngine.downloadModel(modelData.id)
                                     }
                                     AppButton {
+                                        width: parent.width
+                                        controlHeight: 32
+                                        flat: true
                                         visible: page.downloadOf(modelData.id) !== null
                                         text: "Отменить"
-                                        flat: true
-                                        controlHeight: 30
                                         iconSource: "icons/close.svg"
                                         onClicked: liveEngine.cancelDownload(modelData.id)
                                     }
                                     AppButton {
+                                        width: parent.width
+                                        controlHeight: 32
+                                        flat: true
                                         visible: modelData.installed
-                                        text: "Проверить"
-                                        flat: true
-                                        controlHeight: 30
+                                        text: modelData.type === "asr" && modelData.state !== "READY"
+                                              ? "Выбрать" : (modelData.type === "mt" ? "Выбрать" : "Проверить")
                                         iconSource: "icons/check.svg"
-                                        onClicked: liveEngine.verifyModel(modelData.id)
+                                        onClicked: {
+                                            if (modelData.type === "mt") liveEngine.selectModel("mt", modelData.id)
+                                            else if (modelData.type === "asr" && modelData.state !== "READY")
+                                                liveEngine.selectModel("asr", modelData.id)
+                                            else liveEngine.verifyModel(modelData.id)
+                                        }
                                     }
                                     AppButton {
-                                        visible: modelData.installed && modelData.type === "asr"
-                                                 && modelData.state !== "READY"
-                                        text: "Выбрать"
-                                        flat: true
+                                        width: parent.width
                                         controlHeight: 30
-                                        onClicked: liveEngine.selectModel("asr", modelData.id)
-                                    }
-                                    AppButton {
-                                        visible: modelData.installed && modelData.type === "mt"
-                                        text: "Выбрать"
                                         flat: true
-                                        controlHeight: 30
-                                        onClicked: liveEngine.selectModel("mt", modelData.id)
-                                    }
-                                    AppButton {
                                         visible: modelData.installed
                                         text: "Удалить"
-                                        flat: true
-                                        controlHeight: 30
                                         iconSource: "icons/trash.svg"
                                         onClicked: liveEngine.removeModel(modelData.id)
                                     }
@@ -326,156 +487,334 @@ Item {
                             }
                         }
                     }
-                }
-            }
-        }
 
-        // ---------------- языковые пакеты ----------------
-        Column {
-            width: parent.width
-            height: parent.height - 92 - 16 - 34 - 16
-            spacing: 10
-            visible: page.tab === "packs"
-
-            Text {
-                width: parent.width
-                text: liveEngine.packageStatus
-                      ? liveEngine.packageStatus
-                      : "Пакет = недостающие модели перевода для языка. Общие ASR и TTS не скачиваются повторно."
-                color: liveEngine.packageStatus ? Theme.accentBright : Theme.textMuted
-                font.family: Theme.fontFamilyText
-                font.pixelSize: 12
-                wrapMode: Text.WordWrap
-            }
-
-            Flickable {
-                width: parent.width
-                height: parent.height - 32
-                clip: true
-                contentWidth: width
-                contentHeight: packColumn.height
-                boundsBehavior: Flickable.StopAtBounds
-
-                Column {
-                    id: packColumn
-                    width: parent.width
-                    spacing: 10
-
+                    // ---------- языковые пакеты ----------
                     Text {
                         width: parent.width
-                        visible: liveEngine.packs.length === 0
-                        text: "Нет данных — запусти движок."
-                        color: Theme.textMuted
+                        visible: page.tab === "packs"
+                        text: liveEngine.packageStatus
+                              ? liveEngine.packageStatus
+                              : "Пакет — недостающие модели перевода для языка. Общие ASR и TTS не скачиваются повторно."
+                        color: liveEngine.packageStatus ? Theme.accentBright : Theme.textMuted
                         font.family: Theme.fontFamilyText
                         font.pixelSize: 12
+                        wrapMode: Text.WordWrap
                     }
 
                     Repeater {
-                        model: liveEngine.packs
+                        model: page.tab === "packs" ? liveEngine.packs : []
 
                         delegate: Card {
-                            width: packColumn.width
-                            height: packContent.implicitHeight + 32
+                            width: listColumn.width
+                            height: 156
                             padding: 16
 
-                            Column {
-                                id: packContent
-                                width: parent.width
-                                spacing: 6
+                            Row {
+                                anchors.fill: parent
+                                spacing: 14
 
-                                Row {
-                                    width: parent.width
-                                    spacing: 10
+                                Rectangle {
+                                    width: 54
+                                    height: 54
+                                    radius: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: Theme.accentTile
+                                    border.width: 1
+                                    border.color: Theme.accentDeep
 
                                     Text {
-                                        text: modelData.title
-                                        color: Theme.textPrimary
-                                        font.family: Theme.fontFamilyText
-                                        font.pixelSize: 15
-                                        font.weight: Theme.weightSemiBold
-                                    }
-                                    Text {
-                                        text: modelData.code
-                                        color: Theme.textMuted
+                                        anchors.centerIn: parent
+                                        text: String(modelData.code).toUpperCase()
+                                        color: Theme.accentCyan
                                         font.family: Theme.fontFamilyMono
+                                        font.pixelSize: 13
+                                        font.weight: Theme.weightBold
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width - 54 - 14 - 150 - 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 4
+
+                                    Row {
+                                        spacing: 8
+                                        Text {
+                                            text: modelData.title
+                                            color: Theme.textPrimary
+                                            font.family: Theme.fontFamilyText
+                                            font.pixelSize: 15
+                                            font.weight: Theme.weightSemiBold
+                                        }
+                                        StatusPill {
+                                            text: page.packStatusText(modelData.status)
+                                            pillState: page.packPill(modelData.status)
+                                            pillHeight: 22
+                                        }
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        text: "Распознавание: " + (modelData.asr_supported ? "есть" : "нет")
+                                              + " · Синтез: " + (modelData.tts_supported ? "есть" : "нет")
+                                              + " · Не хватает: "
+                                              + (modelData.missing.length > 0
+                                                 ? (modelData.missing.length + " модел. / "
+                                                    + page.sizeText(modelData.missing_mb))
+                                                 : "ничего")
+                                        elide: Text.ElideRight
+                                        color: Theme.textSecondary
+                                        font.family: Theme.fontFamilyText
                                         font.pixelSize: 11
                                     }
-                                    StatusPill {
-                                        text: page.packStatusText(modelData.status)
-                                        pillState: page.packPill(modelData.status)
+
+                                    Text {
+                                        width: parent.width
+                                        text: "Собеседник → " + modelData.to_user.lang + ": "
+                                              + (modelData.to_user.models.length > 0
+                                                 ? page.langText(modelData.to_user.models)
+                                                 : "нет маршрута")
+                                        elide: Text.ElideRight
+                                        color: Theme.textMuted
+                                        font.family: Theme.fontFamilyMono
+                                        font.pixelSize: 10
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        visible: modelData.note !== ""
+                                        text: modelData.note
+                                        elide: Text.ElideRight
+                                        color: Theme.warning
+                                        font.family: Theme.fontFamilyText
+                                        font.pixelSize: 10
                                     }
                                 }
 
-                                Text {
-                                    width: parent.width
-                                    text: "Распознавание: " + (modelData.asr_supported ? "есть" : "нет")
-                                          + " · Синтез: " + (modelData.tts_supported ? "есть" : "нет")
-                                          + " · Не хватает: "
-                                          + (modelData.missing.length > 0
-                                             ? (modelData.missing.length + " модел. / "
-                                                + modelData.missing_mb + " МБ")
-                                             : "ничего")
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 11
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: "Речь собеседника → " + modelData.to_user.lang + ": "
-                                          + (modelData.to_user.models.length > 0
-                                             ? page.langText(modelData.to_user.models)
-                                             : "нет маршрута")
-                                          + "  ·  " + modelData.code + " → " + modelData.to_user.lang
-                                          + ": " + modelData.from_user.kind
-                                    color: Theme.textMuted
-                                    font.family: Theme.fontFamilyMono
-                                    font.pixelSize: 10
-                                    wrapMode: Text.WrapAnywhere
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    visible: modelData.note !== ""
-                                    text: modelData.note
-                                    color: Theme.warning
-                                    font.family: Theme.fontFamilyText
-                                    font.pixelSize: 11
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Row {
-                                    spacing: 8
+                                Column {
+                                    width: 136
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 6
 
                                     AppButton {
+                                        width: parent.width
+                                        controlHeight: 32
                                         visible: modelData.missing.length > 0
                                                  && modelData.asr_supported
                                                  && modelData.tts_supported
-                                        text: "Скачать пакет"
-                                        flat: true
-                                        controlHeight: 28
+                                        text: "Скачать"
                                         iconSource: "icons/arrow-down.svg"
                                         onClicked: liveEngine.installPack(modelData.code)
                                     }
                                     AppButton {
-                                        visible: modelData.missing.length === 0
-                                        text: "Проверить"
+                                        width: parent.width
+                                        controlHeight: 32
                                         flat: true
-                                        controlHeight: 28
-                                        iconSource: "icons/check.svg"
-                                        onClicked: liveEngine.verifyPack(modelData.code)
-                                    }
-                                    AppButton {
                                         visible: modelData.models.length > 0
                                         text: "Удалить"
-                                        flat: true
-                                        controlHeight: 28
                                         iconSource: "icons/trash.svg"
                                         onClicked: liveEngine.removePack(modelData.code)
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // -------- правая колонка --------
+            Column {
+                width: 320
+                height: parent.height
+                spacing: 14
+
+                Card {
+                    width: parent.width
+                    height: 178
+                    padding: 16
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Row {
+                            spacing: 10
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                source: "icons/check.svg"
+                                color: Theme.success
+                                size: 16
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Состояние моделей"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 14
+                                font.weight: Theme.weightSemiBold
+                            }
+                        }
+
+                        Repeater {
+                            model: [
+                                { "label": "ASR", "icon": "icons/wave.svg" },
+                                { "label": "Перевод", "icon": "icons/translate.svg" },
+                                { "label": "TTS", "icon": "icons/volume.svg" }
+                            ]
+
+                            delegate: Row {
+                                width: parent.width
+                                height: 24
+                                spacing: 10
+
+                                Icon {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    source: modelData.icon
+                                    color: Theme.textSecondary
+                                    size: 14
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width - 110
+                                    text: modelData.label
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 12
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: liveEngine.modelsLoaded ? "готов" : "нет"
+                                    color: liveEngine.modelsLoaded ? Theme.success : Theme.textMuted
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: 12
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    width: parent.width
+                    height: 190
+                    padding: 16
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Row {
+                            spacing: 10
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                source: "icons/bolt.svg"
+                                color: Theme.accentCyan
+                                size: 16
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Быстрые действия"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 14
+                                font.weight: Theme.weightSemiBold
+                            }
+                        }
+
+                        AppButton {
+                            width: parent.width
+                            controlHeight: 32
+                            flat: true
+                            text: "Проверить все модели"
+                            iconSource: "icons/check.svg"
+                            onClicked: page.verifyAll()
+                        }
+                        AppButton {
+                            width: parent.width
+                            controlHeight: 32
+                            flat: true
+                            text: "Скачать недостающие"
+                            iconSource: "icons/arrow-down.svg"
+                            onClicked: page.downloadMissing()
+                        }
+                        AppButton {
+                            width: parent.width
+                            controlHeight: 32
+                            flat: true
+                            text: "Обновить каталог"
+                            iconSource: "icons/refresh.svg"
+                            onClicked: {
+                                liveEngine.requestCatalog()
+                                liveEngine.requestPacks()
+                                liveEngine.requestModels()
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    width: parent.width
+                    height: parent.height - 382
+                    padding: 16
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 6
+
+                        Text {
+                            text: "Движок"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 14
+                            font.weight: Theme.weightSemiBold
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: appState.engineState === "READY" ? "Готов к работе"
+                                 : (appState.engineState === "LOADING" ? "Загрузка моделей…"
+                                    : (appState.engineState === "ERROR" ? "Ошибка" : "Остановлен"))
+                            color: appState.engineState === "READY" ? Theme.success : Theme.textSecondary
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 12
+                        }
+
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: appState.gpuName !== "" ? appState.gpuName : "GPU не определён"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyMono
+                            font.pixelSize: 10
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: appState.vramTotal > 0
+                                  ? (appState.vramUsed / 1024).toFixed(1) + " / "
+                                    + Math.round(appState.vramTotal / 1024) + " GB VRAM"
+                                  : "VRAM: нет данных"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyMono
+                            font.pixelSize: 10
+                        }
+
+                        Item { width: 1; height: 2 }
+
+                        AppButton {
+                            width: parent.width
+                            controlHeight: 32
+                            text: liveEngine.modelsLoaded ? "Остановить модели" : "Загрузить модели"
+                            iconSource: liveEngine.modelsLoaded ? "icons/stop.svg" : "icons/play.svg"
+                            onClicked: liveEngine.modelsLoaded ? liveEngine.unloadModels()
+                                                              : liveEngine.loadModels()
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: page.installedCount() + " модел. на диске"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 10
                         }
                     }
                 }
