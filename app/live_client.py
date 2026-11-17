@@ -96,6 +96,9 @@ class LiveTranslator:
                 keep = [p for p in path.split(os.pathsep) if "_MEI" not in p]
                 env["PATH"] = os.pathsep.join(keep)
             self._diag_log(f"[gui] окружение: PATH={env.get('PATH', '')[:300]}")
+            # Движок — консольный python: без флага Windows показывает окно
+            # консоли прямо поверх игры во время загрузки моделей.
+            no_window = 0x08000000 if os.name == "nt" else 0
             try:
                 self.proc = subprocess.Popen(
                     [self.engine_python, self.script,
@@ -103,6 +106,7 @@ class LiveTranslator:
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, text=True, encoding="utf-8",
                     errors="replace", bufsize=1, env=env,
+                    creationflags=no_window,
                     cwd=os.path.dirname(self.script))
             except Exception as exc:  # noqa: BLE001
                 self.error = f"не удалось запустить движок: {exc}"

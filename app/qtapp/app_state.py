@@ -38,6 +38,7 @@ class AppState(QObject):
     bridgeStateChanged = Signal(bool)         # запущен ли мост
     devicesChanged = Signal()                 # список устройств обновлён
     hotkeysChanged = Signal(bool)             # включены ли хоткеи фраз
+    hotkeyComboChanged = Signal()            # изменилась комбинация клавиш
     phraseBankChanged = Signal()              # банк фраз изменён
     recordsChanged = Signal()                 # записи образцов изменены
     statusMessage = Signal(str, str)          # (текст, тип: ok/warn/err/info)
@@ -108,8 +109,12 @@ class AppState(QObject):
 
         # --- пользовательские настройки (workspace/ui_settings.json) ---
         cfg = self._load_settings()
+        # Миграция: раньше всё было выключено по умолчанию, и старый
+        # ui_settings.json перекрывал новые значения. Один раз поднимаем
+        # «всё готово» для существующих установок.
+        fresh = int(cfg.get("defaults_v", 1) or 1) < 2
         self._hints_on = bool(cfg.get("hints", True))
-        self._auto_start = bool(cfg.get("auto_start_engine", False))
+        self._auto_start = True if fresh else bool(cfg.get("auto_start_engine", True))
         self._fullscreen = bool(cfg.get("fullscreen", False))
         self._voice_volume = int(cfg.get("voice_volume", 85))
         # входящий перевод (речь собеседника -> RU -> наушники)
@@ -119,6 +124,11 @@ class AppState(QObject):
         self._outgoing_on = bool(cfg.get("outgoing_on", True))
         # автоскачивание языковых пакетов — по умолчанию ВЫКЛЮЧЕНО
         self._auto_download = bool(cfg.get("auto_download", False))
+        # глобальная клавиша непрерывного режима (меняется в Настройках)
+        self._hotkey = str(cfg.get("hotkey", "alt+capslock") or "alt+capslock")
+        # при старте всё уже включено: хоткеи, мост к кабелю, движок
+        self._hotkeys_pref = True if fresh else bool(cfg.get("hotkeys_on", True))
+        self._bridge_pref = True if fresh else bool(cfg.get("bridge_on", True))
         # режим работы моделей: fast / balanced / quality / manual
         mode = str(cfg.get("mode", "balanced") or "balanced")
         self._mode = mode if mode in ("fast", "balanced", "quality", "manual") \
@@ -136,6 +146,10 @@ class AppState(QObject):
             self._load_phrases()
         except Exception:
             pass
+
+        # Стартовое состояние «всё готово»: устройства, мост, хоткеи, движок.
+        # Отложено, чтобы QML успел подписаться на сигналы.
+        QTimer.singleShot(1200, self._apply_startup_defaults)
 
     # ==================================================================
     # СВОЙСТВА ДЛЯ QML
@@ -155,6 +169,41 @@ class AppState(QObject):
     @Property(bool, notify=hotkeysChanged)
     def hotkeysOn(self) -> bool:
         return self._hotkeys_on
+
+    @Property(str, notify=hotkeyComboChanged)
+    def hotkeyCombo(self) -> str:
+        """Комбинация для непрерывного режима, как её вводит пользователь."""
+        return self._hotkey
+
+    @Slot(result=str)
+    def hotkeyPretty(self) -> str:
+        return hk.pretty_combo(self._hotkey)
+
+    @Slot(str, result=bool)
+    def setHotkey(self, combo: str) -> bool:
+        """Заменить горячую клавишу (например, 'alt+capslock' или 'f9')."""
+        combo = " ".join((combo or "").strip().lower().split())
+        if not combo:
+            return False
+        key, _mods = hk.parse_combo(combo)
+        if not key:
+            self.statusMessage.emit(f"не понимаю клавишу: {combo}", "err")
+            return False
+        was_on = self._hotkeys_on
+        if was_on:
+            try:
+                self.hotkeys.unregister_prefix("live:")
+            except Exception:
+                pass
+            self._hotkeys_on = False
+        self._hotkey = combo
+        self.hotkeyComboChanged.emit()
+        self._save_settings()
+        if was_on:
+            return self.toggleHotkeys()
+        self.statusMessage.emit(
+            f"клавиша сохранена: {hk.pretty_combo(combo)}", "ok")
+        return True
 
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:
@@ -683,14 +732,48 @@ class AppState(QObject):
             self.statusMessage.emit(f"хоткеи недоступны: {exc}", "err")
             return False
 
-        ok = self.hotkeys.register("ctrl+alt+l", "live:cont")
+        combo = self._hotkey or "alt+capslock"
+        ok = self.hotkeys.register(combo, "live:cont")
         self._hotkeys_on = bool(ok)
         self.hotkeysChanged.emit(self._hotkeys_on)
         if ok:
-            self.statusMessage.emit("Ctrl+Alt+L — непрерывный режим", "ok")
+            self.statusMessage.emit(
+                f"{hk.pretty_combo(combo)} — непрерывный режим", "ok")
+            self._save_settings()
         else:
-            self.statusMessage.emit("Ctrl+Alt+L занята другой программой", "err")
+            self.statusMessage.emit(
+                f"{hk.pretty_combo(combo)} занята другой программой", "err")
         return self._hotkeys_on
+
+    def _apply_startup_defaults(self) -> None:
+        """Всё готово сразу после старта: кабель, мост, хоткеи, движок."""
+        try:
+            if not self._out_list or not self._in_list:
+                self.refreshDevices()
+        except Exception:
+            pass
+        try:
+            if self._out_device is None:
+                self._auto_route()
+        except Exception:
+            pass
+        if self._bridge_pref and not self._bridge_on:
+            try:
+                self._start_bridge()
+            except Exception:
+                pass
+        if self._hotkeys_pref and not self._hotkeys_on:
+            try:
+                self.toggleHotkeys()
+            except Exception:
+                pass
+        if self._auto_start and self.engineInstalled() == "да":
+            try:
+                eng = getattr(self, "_live_engine", None)
+                if eng is not None and eng.state in ("STOPPED", "ERROR"):
+                    self.startEngine()
+            except Exception:
+                pass
 
     @Slot(result=bool)
     def toggleBridge(self) -> bool:
@@ -850,7 +933,11 @@ class AppState(QObject):
                     "auto_download": self._auto_download,
                     "mode": self._mode,
                     "src_lang": self._src_lang,
-                    "incoming_on": self._incoming_on,
+                    "defaults_v": 2,
+                "hotkey": self._hotkey,
+                "hotkeys_on": self._hotkeys_on,
+                "bridge_on": self._bridge_on,
+                "incoming_on": self._incoming_on,
                     "incoming_volume": self._incoming_volume,
                     "target_lang": self._target_lang,
                     "peer_lang": self._peer_lang,
@@ -893,9 +980,12 @@ class AppState(QObject):
         except Exception:
             pass
         try:
+            # Русская речь в канал НЕ идёт: в игру уходит только перевод.
+            # Раньше микрофон проходил насквозь, и в голосовом чате было
+            # слышно и русский, и испанский.
             self.bridge = mb.MicBridge(
                 mic_device=mic_idx, render_device=render_idx,
-                mic_gain=self._voice_volume / 100.0, phrase_gain=1.0,
+                mic_gain=0.0, phrase_gain=1.0,
                 monitor_device=monitor_dev, monitor_gain=1.0)
             self.bridge.start()
             self._bridge_on = True

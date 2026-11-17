@@ -176,11 +176,16 @@ Item {
                             font.pixelSize: 13
                             anchors.verticalCenter: parent.verticalCenter
                         }
-                        AppCombo {
+                        // Движок выбирается автоматически (XTTS для клона,
+                        // Piper для языков, которых в XTTS нет) — ручной
+                        // выбор здесь ни на что не влиял.
+                        Text {
+                            text: "выбирается автоматически"
                             width: parent.width - 340
-                            model: page.engineItems
-                            currentIndex: 0
-                            currentText: page.engineItems[0].label
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 12
+                            anchors.verticalCenter: parent.verticalCenter
                         }
                         StatusPill {
                             text: page.engineOk ? "установлен" : "нет"
@@ -254,75 +259,13 @@ Item {
                         color: Theme.border
                     }
 
-                    // горячие клавиши
-                    Row {
-                        width: parent.width
-                        spacing: 10
-
-                        Text {
-                            text: "Клавиши управления"
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamilyText
-                            font.pixelSize: 13
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        Item { width: 1; height: 1 }
-
-                        Row {
-                            spacing: 8
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Repeater {
-                                model: [
-                                    { "key": "Ctrl+Alt+L", "label": "непрерывный режим" }
-                                ]
-
-                                delegate: Row {
-                                    spacing: 6
-
-                                    Rectangle {
-                                        width: keyText.implicitWidth + 16
-                                        height: 26
-                                        radius: 7
-                                        color: "#241B10"
-                                        border.color: Theme.accentDeep
-                                        border.width: 1
-
-                                        Text {
-                                            id: keyText
-                                            anchors.centerIn: parent
-                                            text: modelData.key
-                                            color: Theme.accentBright
-                                            font.family: Theme.fontFamilyMono
-                                            font.pixelSize: 11
-                                        }
-                                    }
-                                    Text {
-                                        text: modelData.label
-                                        color: Theme.textMuted
-                                        font.family: Theme.fontFamilyText
-                                        font.pixelSize: 11
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    // Горячие клавиши и выбор движка — в «Настройках».
                     Row {
                         width: parent.width
                         spacing: 10
 
                         AppButton {
-                            width: (parent.width - 10) / 2
-                            text: appState.hotkeysOn ? "Выключить хоткеи" : "Включить хоткеи"
-                            iconSource: "icons/keyboard.svg"
-                            flat: true
-                            onClicked: appState.toggleHotkeys()
-                        }
-                        AppButton {
-                            width: (parent.width - 10) / 2
+                            width: parent.width
                             text: "Сравнить с образцом"
                             iconSource: "icons/compare.svg"
                             flat: true

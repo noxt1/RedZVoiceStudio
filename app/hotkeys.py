@@ -166,11 +166,17 @@ def pretty_combo(combo: str) -> str:
         return "—"
     names = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win",
              "space": "Пробел", "enter": "Enter", "tab": "Tab",
-             "escape": "Esc", "backspace": "Backspace"}
+             "escape": "Esc", "backspace": "Backspace",
+             "capslock": "CapsLock", "insert": "Insert", "delete": "Delete",
+             "home": "Home", "end": "End", "pageup": "PageUp",
+             "pagedown": "PageDown", "printscreen": "PrintScreen"}
     parts = []
     for p in combo.split("+"):
         low = p.lower()
-        parts.append(names.get(low, low.upper() if len(low) == 1 else low))
+        label = names.get(low)
+        if label is None:
+            label = low.upper() if len(low) <= 2 or low.startswith("f") and low[1:].isdigit() else low
+        parts.append(label)
     return "+".join(parts)
 
 

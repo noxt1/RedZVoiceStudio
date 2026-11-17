@@ -5,6 +5,8 @@ import RedZ 1.0
 Item {
     id: page
 
+    property string hkDraft: appState.hotkeyCombo
+
     property var micItems: []
     property int micIndex: -1
     property var outItems: []
@@ -314,27 +316,26 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        Rectangle {
-                            width: keyText.implicitWidth + 16
-                            height: 26
-                            radius: 7
-                            color: "#241B10"
-                            border.color: Theme.accentDeep
-                            border.width: 1
+                        // Любая комбинация: alt+capslock, ctrl+alt+l, f9…
+                        AppField {
+                            width: 190
+                            fieldHeight: 34
+                            text: page.hkDraft
+                            placeholderText: "alt+capslock"
+                            onTextEdited: (t) => page.hkDraft = t
                             anchors.verticalCenter: parent.verticalCenter
+                        }
 
-                            Text {
-                                id: keyText
-                                anchors.centerIn: parent
-                                text: "Ctrl+Alt+L"
-                                color: Theme.accentBright
-                                font.family: Theme.fontFamilyMono
-                                font.pixelSize: 11
-                            }
+                        AppButton {
+                            width: 120
+                            controlHeight: 34
+                            text: "Применить"
+                            flat: true
+                            onClicked: appState.setHotkey(page.hkDraft)
                         }
 
                         Text {
-                            text: "непрерывный режим"
+                            text: "непрерывный режим · " + appState.hotkeyPretty()
                             color: Theme.textMuted
                             font.family: Theme.fontFamilyText
                             font.pixelSize: 11
