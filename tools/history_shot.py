@@ -41,7 +41,10 @@ def main() -> int:
     live.recorder = state.recorder
     state._live_engine = live
 
-    history = HistoryModel()
+    # временный файл: скриншотный скрипт не должен писать в настоящую историю
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="auraloom_shot_")
+    history = HistoryModel(path=os.path.join(tmp_dir, "history.jsonl"))
     history.add("out", "Привет, как дела?", "Hola, ¿cómo estás?")
     history.add("in", "О нет, нет, нет.", "Oh no, no, no.")
     history.add("out", "Я уже хочу есть.", "Ya tengo hambre.")
