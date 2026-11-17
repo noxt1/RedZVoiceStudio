@@ -46,6 +46,8 @@ class VoiceController(QObject):
         self._take_ok = False
         self._take_duration = 0.0
         self._error = ""
+        # отмеченные записи для сборки reference (пути wav)
+        self._selected: set[str] = set()
 
         # таймер уровня
         from PySide6.QtCore import QTimer
@@ -304,6 +306,70 @@ class VoiceController(QObject):
             return
         audio_play.play_file(path)
 
+    @Slot(int)
+    def playSampleAt(self, row: int) -> None:
+        """Прослушать запись по строке списка (а не только reference)."""
+        items = self._sample_model()
+        if not (0 <= row < len(items)):
+            return
+        self.playSample(items[row]["path"])
+
+    @Slot(str)
+    def toggleSample(self, path: str) -> None:
+        """Отметить/снять запись для сборки reference."""
+        if not path:
+            return
+        if path in self._selected:
+            self._selected.discard(path)
+        else:
+            self._selected.add(path)
+        self.samplesChanged.emit()
+
+    @Slot()
+    def selectAllSamples(self) -> None:
+        self._selected = {it["path"] for it in self._sample_model()}
+        self.samplesChanged.emit()
+
+    @Slot()
+    def clearSelection(self) -> None:
+        self._selected.clear()
+        self.samplesChanged.emit()
+
+    @Property(int, notify=samplesChanged)
+    def selectedCount(self) -> int:
+        return len(self._selected)
+
+    @Slot(str, result=bool)
+    def saveProfile(self, name: str) -> bool:
+        """Сохранить текущий reference как новый голосовой профиль.
+
+        Если profile.wav нет — сначала собираем reference из отмеченных
+        записей (или всех), чтобы профиль не остался пустым.
+        """
+        name = (name or "").strip()
+        if not name:
+            self.statusMessage.emit("введи имя профиля", "warn")
+            return False
+        ref = sp.output_paths()["reference"]
+        if not os.path.exists(ref):
+            self.buildReference()
+        if not os.path.exists(ref):
+            return False
+        try:
+            # create_profile() возвращает (путь_к_reference, сообщение)
+            target, _msg = sp.create_profile(name)
+            if not target:
+                self.statusMessage.emit(_msg or "профиль не создан", "err")
+                return False
+            import shutil
+            shutil.copy2(ref, target)
+        except Exception as exc:
+            self.statusMessage.emit(f"профиль не создался: {exc}", "err")
+            return False
+        self.statusMessage.emit(f"профиль «{name}» создан", "ok")
+        self.samplesChanged.emit()
+        return True
+
     @Slot(str)
     def deleteSample(self, path: str) -> None:
         try:
@@ -312,6 +378,7 @@ class VoiceController(QObject):
         except Exception as exc:
             self.statusMessage.emit(f"не удалилось: {exc}", "err")
             return
+        self._selected.discard(path)
         self._load_records()
         self.takeChanged.emit()
         self.samplesChanged.emit()
@@ -331,8 +398,11 @@ class VoiceController(QObject):
     # ==================================================================
     @Slot()
     def buildReference(self) -> None:
-        samples = [self._records[k] for k in sorted(self._records)
-                   if os.path.exists(self._records[k])]
+        """Собрать reference из отмеченных записей (или из всех)."""
+        samples = [p for p in self._selected if os.path.exists(p)]
+        if not samples:
+            samples = [self._records[k] for k in sorted(self._records)
+                       if os.path.exists(self._records[k])]
         if not samples:
             self.statusMessage.emit("нет записей — сначала запиши дубли", "warn")
             return
@@ -394,6 +464,7 @@ class VoiceController(QObject):
                     "name": fn,
                     "meta": f"{dur:.1f} c" if dur else "—",
                     "duration": dur,
+                    "selected": p in self._selected,
                 })
         return out
 

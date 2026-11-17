@@ -136,6 +136,9 @@ ASR_COMPUTE = os.environ.get("REDZ_ASR_COMPUTE", "int8_float16")
 # Минимальная уверенность определения языка собеседника (режим auto).
 # Ниже порога фраза не переводится: лучше пропустить, чем озвучить не то.
 PEER_LANG_MIN_CONF = float(os.environ.get("REDZ_PEER_LANG_CONF", "0.60"))
+# Сколько цепочек перевода держать в памяти: 2 — переключение языка
+# мгновенное, но +~600 МБ RAM; 1 — экономно, с перезагрузкой модели.
+MT_CACHE_CHAINS = max(1, int(os.environ.get("REDZ_MT_CACHE_CHAINS", "2")))
 
 
 def _hf_hub_dir() -> str:
@@ -1011,7 +1014,13 @@ class Engine:
         # Освобождаем память ДО загрузки: мегрельская цепочка (opus-mt-en-mul
         # ~800 МБ) часто не влезает рядом с уже загруженной итальянской.
         # Без этого процесс падал по OOM без сообщения («тихий краш»).
-        if code not in self._mt_cache:
+        # Ключ кэша — 'chain:<язык>', а не просто код: раньше условие
+        # сравнивало код с ключами и всегда было истинным, поэтому кэш
+        # сбрасывался при каждом переключении (2-18 с к первой фразе).
+        # Теперь чистим только когда модели реально не помещаются.
+        chain_key = f"chain:{code}"
+        loaded_chains = [k for k in self._mt_cache if k.startswith("chain:")]
+        if chain_key not in self._mt_cache and len(loaded_chains) >= MT_CACHE_CHAINS:
             log(f"[engine] смена языка {self.lang} -> {code}: "
                 f"освобождаю кэш MT (RSS={_rss_mb():.0f} МБ)")
             self._clear_mt_cache(keep=code)
@@ -1157,7 +1166,9 @@ class Engine:
             else:
                 chain.append((tok, model))
         # Кэш: не больше двух языков (текущий + испанский) — RAM конечен.
-        if len(self._mt_cache) >= 2 and key not in self._mt_cache:
+        # Считаем только прямые цепочки: обратные (rev:) не вытесняются.
+        direct = [k for k in self._mt_cache if k.startswith("chain:")]
+        if len(direct) >= MT_CACHE_CHAINS and key not in self._mt_cache:
             keep = {key}
             if "chain:es" in self._mt_cache and key != "chain:es":
                 keep.add("chain:es")
@@ -1639,6 +1650,14 @@ class Engine:
 
         if not detected or detected == "auto":
             return reject("язык не определён")
+        # Язык уже подтверждён ранее — принимаем и короткую реплику.
+        # Раньше пороги «длительность/слова» проверялись первыми, и после
+        # одной удачной фразы следующие («Sí, claro», «Vale») отбрасывались
+        # с «мало слов», и диалог обрывался.
+        if self.peer_lang_confirmed and detected == self.peer_lang_confirmed:
+            emit({"event": "peer_lang_detected", **payload,
+                  "accepted": True, "reason": "язык уже подтверждён"})
+            return True, "ok"
         if dur < self._peer_lang_min_sec:
             return reject(f"короткий фрагмент ({dur:.1f} < "
                           f"{self._peer_lang_min_sec:.1f} с)")

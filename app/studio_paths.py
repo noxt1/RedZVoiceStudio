@@ -11,7 +11,12 @@ import os
 import sys
 import time
 
-APP_NAME = "RedZVoiceStudio"
+import branding
+
+# Папка данных берётся из branding.py: при ребрендинге меняется одно имя,
+# а существующая папка переименовывается (ниже), чтобы не потерять модели
+# и настройки.
+APP_NAME = branding.DATA_DIR
 PIPER_VOICES = {
     "M": ("es_MX-ald-medium.onnx", "es_MX-ald-medium.onnx.json"),
     "F": ("es_MX-claude-high.onnx", "es_MX-claude-high.onnx.json"),
@@ -73,7 +78,29 @@ def app_dir() -> str:
 
 def local_app_data() -> str:
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(base, APP_NAME)
+    path = os.path.join(base, APP_NAME)
+    _migrate_data_dir(base, path)
+    return path
+
+
+def _migrate_data_dir(base: str, target: str) -> None:
+    """Переименовать старую папку данных после смены названия.
+
+    Модели и настройки остаются на месте: переименование дешевле копирования
+    4+ ГБ. Если Windows держит файлы (запущен движок) — молча оставляем
+    старую папку: потерять данные хуже, чем не переименовать.
+    """
+    if os.path.isdir(target):
+        return
+    for old in getattr(branding, "LEGACY_DATA_DIRS", ()) or ():
+        src = os.path.join(base, old)
+        if not os.path.isdir(src):
+            continue
+        try:
+            os.replace(src, target)
+            return
+        except Exception:
+            return
 
 
 def workspace() -> str:

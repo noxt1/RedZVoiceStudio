@@ -33,6 +33,7 @@ from app_state import AppState
 from live_engine import LiveEngine
 from voice_controller import VoiceController
 from models import (PromptModel, TakeModel, SampleModel, HistoryModel)
+import branding
 
 QML_DIR = os.path.join(_HERE, "qml")
 
@@ -48,9 +49,9 @@ def main() -> int:
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     app = QGuiApplication(sys.argv)
-    app.setApplicationName("RedZ Voice Studio")
-    app.setOrganizationName("RedZ")
-    app.setApplicationDisplayName("RedZ Voice Studio")
+    app.setApplicationName(branding.BRAND_NAME)
+    app.setOrganizationName(branding.ORG_NAME)
+    app.setApplicationDisplayName(branding.BRAND_NAME)
 
     # иконка окна
     ico = os.path.join(_APP_DIR, "studio.ico")
@@ -86,6 +87,11 @@ def main() -> int:
 
     # --- контекст QML ---
     ctx = engine.rootContext()
+    # название продукта — из одного модуля (app/branding.py)
+    ctx.setContextProperty("brandName", branding.BRAND_NAME)
+    ctx.setContextProperty("brandShort", branding.BRAND_SHORT)
+    ctx.setContextProperty("brandSub", branding.BRAND_SUB)
+    ctx.setContextProperty("brandTagline", branding.BRAND_TAGLINE)
     ctx.setContextProperty("appState", state)
     ctx.setContextProperty("liveEngine", live)
     ctx.setContextProperty("voiceController", voices)

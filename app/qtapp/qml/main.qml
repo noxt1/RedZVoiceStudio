@@ -15,7 +15,7 @@ Window {
     minimumHeight: 840
     visible: true
     color: Theme.bg
-    title: "RedZ Voice Studio"
+    title: brandName
     // настройка «Режим экрана»
     visibility: appState.fullscreen ? Window.FullScreen : Window.Windowed
 
@@ -100,7 +100,7 @@ Window {
                     Item { width: 1; height: 6 }
 
                     Text {
-                        text: "RedZ"
+                        text: brandShort
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: Theme.accentBright
                         font.family: Theme.fontFamilyBrand
@@ -108,7 +108,7 @@ Window {
                         font.weight: Theme.weightBold
                     }
                     Text {
-                        text: "Voice Studio"
+                        text: brandSub
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: Theme.textPrimary
                         font.family: Theme.fontFamilyBrand
@@ -116,7 +116,7 @@ Window {
                         font.italic: true
                     }
                     Text {
-                        text: "Speak · Translate · Play"
+                        text: brandTagline
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: Theme.textMuted
                         font.family: Theme.fontFamilyBrand

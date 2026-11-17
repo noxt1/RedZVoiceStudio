@@ -8,6 +8,7 @@ Item {
 
     property var profileItems: []
     property int profileIndex: 0
+    property string newProfile: ""
 
     readonly property var engineItems: [
         { "label": "Русский (RUS) – XTTS", "value": "xtts" }
@@ -131,7 +132,9 @@ Item {
 
                     AppButton {
                         width: parent.width
-                        text: "Собрать reference"
+                        text: voiceController.selectedCount > 0
+                              ? "Собрать из выбранных (" + voiceController.selectedCount + ")"
+                              : "Собрать из всех записей"
                         iconSource: "icons/sparkles.svg"
                         baseColor: Theme.accent
                         onClicked: voiceController.buildReference()
@@ -407,31 +410,114 @@ Item {
                     }
                 }
 
+                // Инструменты над списком: отметить записи, собрать из них
+                // образец и сохранить результат отдельным профилем (клоном).
+                Row {
+                    width: parent.width
+                    spacing: 8
+
+                    AppButton {
+                        width: 130
+                        controlHeight: 30
+                        text: "Выбрать все"
+                        flat: true
+                        onClicked: voiceController.selectAllSamples()
+                    }
+                    AppButton {
+                        width: 130
+                        controlHeight: 30
+                        text: "Снять выбор"
+                        flat: true
+                        onClicked: voiceController.clearSelection()
+                    }
+                    AppButton {
+                        width: 210
+                        controlHeight: 30
+                        text: voiceController.selectedCount > 0
+                              ? "Собрать из отмеченных (" + voiceController.selectedCount + ")"
+                              : "Собрать из всех"
+                        onClicked: voiceController.buildReference()
+                    }
+                    Item { width: 1; height: 1 }
+                    AppField {
+                        width: 170
+                        fieldHeight: 30
+                        placeholderText: "имя нового профиля"
+                        onTextEdited: (t) => page.newProfile = t
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    AppButton {
+                        width: 160
+                        controlHeight: 30
+                        text: "Создать профиль"
+                        iconSource: "icons/star.svg"
+                        flat: true
+                        onClicked: voiceController.saveProfile(page.newProfile)
+                    }
+                }
+
                 ListView {
                     width: parent.width
-                    height: parent.height - 106
+                    height: parent.height - 150
                     clip: true
                     spacing: 2
                     model: voiceController.takeModel
 
                     delegate: Item {
+                        id: takeRow
                         width: ListView.view.width
                         height: 34
 
+                        readonly property bool picked: !!modelData.selected
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 7
+                            color: takeRow.picked ? "#20180E" : "transparent"
+                        }
+
+                        // клик по строке — выбрать подсказку (текст справа)
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: voiceController.selectPrompt(modelData.index)
+                        }
+
                         Row {
                             anchors.fill: parent
-                            spacing: 10
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 6
+                            spacing: 8
 
+                            // галочка: взять запись в образец
                             Rectangle {
-                                width: 8
-                                height: 8
-                                radius: 4
-                                color: modelData.ok ? Theme.success : Theme.surface3
+                                width: 18
+                                height: 18
+                                radius: 5
                                 anchors.verticalCenter: parent.verticalCenter
+                                color: takeRow.picked ? Theme.accent : Theme.surface1
+                                border.color: takeRow.picked ? Theme.accent : Theme.border
+                                border.width: 1
+
+                                Icon {
+                                    anchors.centerIn: parent
+                                    source: "icons/check.svg"
+                                    size: 12
+                                    color: "#1A1206"
+                                    visible: takeRow.picked
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: modelData.ok
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: voiceController.toggleSample(
+                                        modelData.ok ? modelData.path : "")
+                                }
                             }
+
                             Text {
                                 text: ("0" + (modelData.index + 1)).slice(-2)
-                                width: 26
+                                width: 24
                                 color: Theme.textMuted
                                 font.family: Theme.fontFamilyMono
                                 font.pixelSize: 11
@@ -439,19 +525,39 @@ Item {
                             }
                             Text {
                                 text: modelData.text
-                                width: parent.width - 80
+                                width: parent.width - 175
                                 elide: Text.ElideRight
                                 color: modelData.ok ? Theme.textPrimary : Theme.textSecondary
                                 font.family: Theme.fontFamilyText
                                 font.pixelSize: 13
                                 anchors.verticalCenter: parent.verticalCenter
                             }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: voiceController.selectPrompt(modelData.index)
+                            Text {
+                                text: modelData.ok ? modelData.duration.toFixed(1) + " в" : "—"
+                                width: 46
+                                horizontalAlignment: Text.AlignRight
+                                color: Theme.textMuted
+                                font.family: Theme.fontFamilyMono
+                                font.pixelSize: 11
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Item {
+                                width: 26
+                                height: 26
+                                anchors.verticalCenter: parent.verticalCenter
+                                Icon {
+                                    anchors.centerIn: parent
+                                    source: "icons/play.svg"
+                                    size: 14
+                                    color: modelData.ok ? Theme.accent : Theme.surface3
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: modelData.ok
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: voiceController.playSampleAt(modelData.index)
+                                }
+                            }
                         }
                     }
                 }

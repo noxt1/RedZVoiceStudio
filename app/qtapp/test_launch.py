@@ -33,6 +33,7 @@ from PySide6.QtQuick import QQuickWindow
 from app_state import AppState
 from live_engine import LiveEngine
 from voice_controller import VoiceController
+import branding
 from models import PromptModel, TakeModel, SampleModel, HistoryModel
 
 
@@ -51,6 +52,10 @@ def main() -> int:
     state._live_engine = live
 
     ctx = engine.rootContext()
+    ctx.setContextProperty("brandName", branding.BRAND_NAME)
+    ctx.setContextProperty("brandShort", branding.BRAND_SHORT)
+    ctx.setContextProperty("brandSub", branding.BRAND_SUB)
+    ctx.setContextProperty("brandTagline", branding.BRAND_TAGLINE)
     ctx.setContextProperty("appState", state)
     ctx.setContextProperty("liveEngine", live)
     ctx.setContextProperty("voiceController", voices)
