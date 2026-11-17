@@ -44,6 +44,10 @@
 |---|---|---|
 | Запуск интерфейса | `test_launch.py`, скриншоты разделов | PASS |
 | Клавиатурная навигация | `tools/nav_key_check.py`: Tab → Down ×2 → Enter, затем Up → Space | PASS — home → voices → live, QTest в offscreen |
+| «Голос»: панель инструментов в 1280 px | скриншот после разбивки на два ряда | PASS — поле имени профиля и «Создать профиль» видны целиком, `shots/voices_1280x840.png` |
+| «История» с записями | `tools/history_shot.py` наполняет модель четырьмя репликами | PASS — карточки, направления (RU→ES / ES→RU), время, действия; `shots/history_filled_1280x840.png`, `shots/history_filled_1920x1080.png` |
+| IT→RU через английский | движковый python: `opus-mt-it-en` + `opus-mt-en-ru`, 3 фразы, beam 4 | PASS — «Non toccare niente, per favore!» → «Ничего не трогай, пожалуйста!»; в одной фразе потерян вопрос «Где ты?» (потеря на pivot) |
+| EXE после ребрендинга | `pyinstaller --clean --noconfirm app/redz_voice_studio.spec`, запуск, скриншот | PASS — `dist/RedZVoiceStudio.exe` 301 МБ, окно `Auraloom`, новый UI рендерится (`shots/exe_launch.png`) |
 | Все 7 экранов в двух разрешениях | скриншоты 1280×840 и 1920×1080 для главной, перевода, голоса, моделей, настроек, истории, фраз | PASS — `shots/*_1280x840.png`, `shots/*_1920x1080.png`; пустые состояния истории — ожидаемо |
 | Запуск движка | `state.startEngine()` | PASS — `LOADING` 0.2 с, `READY` 20.4 с |
 | Загрузка моделей (лог) | `live_engine.log` | PASS — ASR+MT 7.1 с, XTTS 10.4 с, RSS 2.1 ГБ |

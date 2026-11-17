@@ -529,47 +529,59 @@ Item {
 
                 // Инструменты над списком: отметить записи, собрать из них
                 // образец и сохранить результат отдельным профилем (клоном).
-                Row {
+                // Две строки — на 1280 px фиксированные ширины в один ряд не лезли
+                // и кнопка «Создать профиль» обрезалась.
+                Column {
                     width: parent.width
                     spacing: 8
 
-                    AppButton {
-                        width: 130
-                        controlHeight: 30
-                        text: "Выбрать все"
-                        flat: true
-                        onClicked: voiceController.selectAllSamples()
+                    Row {
+                        width: parent.width
+                        spacing: 8
+
+                        AppButton {
+                            width: 130
+                            controlHeight: 30
+                            text: "Выбрать все"
+                            flat: true
+                            onClicked: voiceController.selectAllSamples()
+                        }
+                        AppButton {
+                            width: 130
+                            controlHeight: 30
+                            text: "Снять выбор"
+                            flat: true
+                            onClicked: voiceController.clearSelection()
+                        }
+                        AppButton {
+                            width: Math.max(210, parent.width - 276)
+                            controlHeight: 30
+                            text: voiceController.selectedCount > 0
+                                  ? "Собрать из отмеченных (" + voiceController.selectedCount + ")"
+                                  : "Собрать из всех"
+                            onClicked: voiceController.buildReference()
+                        }
                     }
-                    AppButton {
-                        width: 130
-                        controlHeight: 30
-                        text: "Снять выбор"
-                        flat: true
-                        onClicked: voiceController.clearSelection()
-                    }
-                    AppButton {
-                        width: 210
-                        controlHeight: 30
-                        text: voiceController.selectedCount > 0
-                              ? "Собрать из отмеченных (" + voiceController.selectedCount + ")"
-                              : "Собрать из всех"
-                        onClicked: voiceController.buildReference()
-                    }
-                    Item { width: 1; height: 1 }
-                    AppField {
-                        width: 170
-                        fieldHeight: 30
-                        placeholderText: "имя нового профиля"
-                        onTextEdited: (t) => page.newProfile = t
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    AppButton {
-                        width: 160
-                        controlHeight: 30
-                        text: "Создать профиль"
-                        iconSource: "icons/star.svg"
-                        flat: true
-                        onClicked: voiceController.saveProfile(page.newProfile)
+
+                    Row {
+                        width: parent.width
+                        spacing: 8
+
+                        AppField {
+                            width: parent.width - 188
+                            fieldHeight: 30
+                            placeholderText: "имя нового профиля"
+                            onTextEdited: (t) => page.newProfile = t
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        AppButton {
+                            width: 180
+                            controlHeight: 30
+                            text: "Создать профиль"
+                            iconSource: "icons/star.svg"
+                            flat: true
+                            onClicked: voiceController.saveProfile(page.newProfile)
+                        }
                     }
                 }
 
