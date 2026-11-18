@@ -111,6 +111,11 @@ class VoiceController(QObject):
     def sampleModel(self):
         return self._sample_model()
 
+    @Property("QVariantList", notify=samplesChanged)
+    def sampleRows(self):
+        """Список записей для галочек: каждый wav-файл отдельной строкой."""
+        return self._sample_rows()
+
     @Property(int, notify=samplesChanged)
     def selectedSample(self) -> int:
         return self._selected_sample_row
@@ -350,10 +355,11 @@ class VoiceController(QObject):
         if not name:
             self.statusMessage.emit("введи имя профиля", "warn")
             return False
-        ref = sp.output_paths()["reference"]
-        if not os.path.exists(ref):
-            self.buildReference()
-        if not os.path.exists(ref):
+        # Не перезаписываем существующий профиль молча: create_profile()
+        # возвращает путь и для уже существующего, а copy2 портил его reference.
+        target_dir = sp.profile_dir(name)
+        if os.path.isdir(target_dir) and os.listdir(target_dir):
+            self.statusMessage.emit(f"профиль «{name}» уже существует", "warn")
             return False
         try:
             # create_profile() возвращает (путь_к_reference, сообщение)
@@ -361,8 +367,25 @@ class VoiceController(QObject):
             if not target:
                 self.statusMessage.emit(_msg or "профиль не создан", "err")
                 return False
-            import shutil
-            shutil.copy2(ref, target)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            # Собираем сразу в reference нового профиля — из отмеченных
+            # записей или из всех. Общий reference.wav не трогаем.
+            samples = [p for p in sorted(self._selected) if os.path.exists(p)]
+            if not samples:
+                samples = [row["path"] for row in self._sample_rows()
+                           if os.path.exists(row["path"])]
+            if samples:
+                res = core.build_reference(samples, target)
+                if not (isinstance(res, dict) and res.get("ok")):
+                    self.statusMessage.emit("не удалось собрать профиль", "err")
+                    return False
+            else:
+                ref = sp.output_paths()["reference"]
+                if not os.path.exists(ref):
+                    self.statusMessage.emit("нет записей для профиля", "warn")
+                    return False
+                import shutil
+                shutil.copy2(ref, target)
         except Exception as exc:
             self.statusMessage.emit(f"профиль не создался: {exc}", "err")
             return False
@@ -399,14 +422,16 @@ class VoiceController(QObject):
     @Slot()
     def buildReference(self) -> None:
         """Собрать reference из отмеченных записей (или из всех)."""
-        samples = [p for p in self._selected if os.path.exists(p)]
+        samples = [p for p in sorted(self._selected) if os.path.exists(p)]
         if not samples:
-            samples = [self._records[k] for k in sorted(self._records)
-                       if os.path.exists(self._records[k])]
+            samples = [row["path"] for row in self._sample_rows()
+                       if os.path.exists(row["path"])]
         if not samples:
             self.statusMessage.emit("нет записей — сначала запиши дубли", "warn")
             return
-        out = sp.output_paths()["reference"]
+        # Пишем в reference активного профиля — именно его берёт движок
+        # (studio_paths.active_reference), а не общий файл.
+        out = sp.active_reference()
         self.statusMessage.emit("собираю reference.wav…", "info")
         try:
             res = core.build_reference(samples, out)
@@ -441,7 +466,51 @@ class VoiceController(QObject):
                 "emotion": it.get("emotion", ""),
                 "emotion_label": it.get("emotion_label", ""),
                 "duration": dur,
+                "path": path,
+                "selected": bool(path) and path in self._selected,
                 "ok": bool(path),
+            })
+        return out
+
+    def _sample_rows(self) -> list[dict]:
+        """Все записи из voice_samples отдельными строками.
+
+        Раньше список на странице «Голос» строился только по take_NN.wav,
+        поэтому более старые записи (p01_take_*.wav) не показывались и
+        выбрать их галочкой было нельзя. Теперь в списке каждый файл,
+        а подпись — текст подсказки, если имя на неё указывает.
+        """
+        out = []
+        d = sp.output_paths()["samples"]
+        if not os.path.isdir(d):
+            return out
+        import re
+        for fn in sorted(os.listdir(d)):
+            if not fn.lower().endswith(".wav"):
+                continue
+            p = os.path.join(d, fn)
+            m = (re.match(r"^p(\d{1,2})_", fn.lower())
+                 or re.match(r"^take_(\d{1,2})", fn.lower()))
+            idx = int(m.group(1)) - 1 if m else -1
+            if 0 <= idx < len(self._items):
+                text = str(self._items[idx].get("es") or
+                           self._items[idx].get("ru") or fn)
+            else:
+                text = fn
+            dur = 0.0
+            try:
+                import soundfile as sf
+                dur = float(sf.info(p).duration)
+            except Exception:
+                pass
+            out.append({
+                "index": idx,
+                "name": fn,
+                "text": text,
+                "path": p,
+                "duration": dur,
+                "selected": p in self._selected,
+                "ok": True,
             })
         return out
 

@@ -328,7 +328,9 @@ Window {
     Connections {
         target: liveEngine
         function onErrorMessage(msg) { toast.show(msg, "err") }
-        function onLogLine(line) { if (line) toast.show(line, "info") }
+        // Служебные строки движка (torch/warnings с путями) пишутся в лог,
+        // а не всплывают поверх интерфейса — раньше они закрывали страницу.
+        function onLogLine(line) { console.debug(line) }
     }
 
     // ==================================================================

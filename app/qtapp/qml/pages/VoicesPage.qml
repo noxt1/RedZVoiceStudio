@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import RedZ 1.0
 
 /// Голос — по референсу: карточка с «микрофоном», настройки движка/профиля,
@@ -41,9 +42,34 @@ Item {
         function onProfilesChanged() { page.refreshProfiles() }
     }
 
-    Column {
+    // Страница выше окна на 1280×840 — прокручиваем, чтобы нижняя карточка
+    // и список записей не обрезались краем окна.
+    Flickable {
+        id: flick
         anchors.fill: parent
-        spacing: 16
+        contentWidth: width
+        contentHeight: pageColumn.height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar {
+            id: pageScroll
+            width: 8
+            policy: ScrollBar.AsNeeded
+            background: Item { }
+            contentItem: Rectangle {
+                implicitWidth: 6
+                radius: 3
+                color: Theme.accent
+                opacity: pageScroll.pressed ? 0.9 : 0.45
+            }
+        }
+
+        Column {
+            id: pageColumn
+            // 14 px справа — место под полосу прокрутки, иначе она
+            // накрывает правую колонку (VRAM и кнопки).
+            width: flick.width - 14
+            spacing: 16
 
         PageTitle {
             width: parent.width
@@ -399,7 +425,7 @@ Item {
         // ---------------- запись образца ----------------
         Card {
             width: parent.width
-            height: parent.height - 372 - 92 - 48
+            height: Math.max(360, flick.height - 372 - 92)
             padding: 20
 
             Column {
@@ -580,17 +606,23 @@ Item {
                             text: "Создать профиль"
                             iconSource: "icons/star.svg"
                             flat: true
-                            onClicked: voiceController.saveProfile(page.newProfile)
+                            onClicked: {
+                                if (voiceController.saveProfile(page.newProfile)) {
+                                    // Новый профиль сразу становится активным
+                                    appState.setProfile(page.newProfile)
+                                    page.refreshProfiles()
+                                }
+                            }
                         }
                     }
                 }
 
                 ListView {
                     width: parent.width
-                    height: parent.height - 150
+                    height: Math.max(120, parent.height - 184)
                     clip: true
                     spacing: 2
-                    model: voiceController.takeModel
+                    model: voiceController.sampleRows
 
                     delegate: Item {
                         id: takeRow
@@ -605,11 +637,15 @@ Item {
                             color: takeRow.picked ? "#20180E" : "transparent"
                         }
 
-                        // клик по строке — выбрать подсказку (текст справа)
+                        // клик по строке — выбрать подсказку (текст справа),
+                        // если запись привязана к подсказке
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: voiceController.selectPrompt(modelData.index)
+                            onClicked: {
+                                if (modelData.index >= 0)
+                                    voiceController.selectPrompt(modelData.index)
+                            }
                         }
 
                         Row {
@@ -637,10 +673,9 @@ Item {
                                 }
                                 MouseArea {
                                     anchors.fill: parent
-                                    enabled: modelData.ok
+                                    enabled: modelData.ok && !!modelData.path
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: voiceController.toggleSample(
-                                        modelData.ok ? modelData.path : "")
+                                    onClicked: voiceController.toggleSample(modelData.path)
                                 }
                             }
 
@@ -654,7 +689,7 @@ Item {
                             }
                             Text {
                                 text: modelData.text
-                                width: parent.width - 175
+                                width: parent.width - 150
                                 elide: Text.ElideRight
                                 color: modelData.ok ? Theme.textPrimary : Theme.textSecondary
                                 font.family: Theme.fontFamilyText
@@ -662,7 +697,8 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                             Text {
-                                text: modelData.ok ? modelData.duration.toFixed(1) + " в" : "—"
+                                text: modelData.ok && modelData.duration > 0
+                                      ? modelData.duration.toFixed(1) + " c" : "—"
                                 width: 46
                                 horizontalAlignment: Text.AlignRight
                                 color: Theme.textMuted
@@ -684,13 +720,14 @@ Item {
                                     anchors.fill: parent
                                     enabled: modelData.ok
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: voiceController.playSampleAt(modelData.index)
+                                    onClicked: voiceController.playSample(modelData.path)
                                 }
                             }
                         }
                     }
                 }
             }
+        }
         }
     }
 }

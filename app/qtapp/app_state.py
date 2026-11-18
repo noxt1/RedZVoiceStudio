@@ -794,11 +794,15 @@ class AppState(QObject):
 
     @Slot(result=str)
     def referencePath(self) -> str:
-        return sp.output_paths()["reference"]
+        # Активный профиль — его reference; иначе общий файл.
+        return sp.active_reference()
 
     @Slot(result=bool)
     def hasReference(self) -> bool:
-        return os.path.exists(sp.output_paths()["reference"])
+        try:
+            return os.path.exists(sp.active_reference())
+        except Exception:
+            return False
 
     @Slot(result=str)
     def cableStatus(self) -> str:
