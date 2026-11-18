@@ -224,10 +224,17 @@ Item {
 
                         AppButton {
                             width: (parent.width - 16) / 2
-                            text: "Прослушать образец"
-                            iconSource: "icons/play.svg"
+                            text: voiceController.playingPath !== ""
+                                  ? "Остановить звук" : "Прослушать образец"
+                            iconSource: voiceController.playingPath !== ""
+                                        ? "icons/stop.svg" : "icons/play.svg"
                             flat: true
-                            onClicked: voiceController.playSample(appState.referencePath())
+                            onClicked: {
+                                if (voiceController.playingPath !== "")
+                                    voiceController.stopPlayback()
+                                else
+                                    voiceController.playSample(appState.referencePath())
+                            }
                         }
                     }
 
@@ -712,9 +719,12 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 Icon {
                                     anchors.centerIn: parent
-                                    source: "icons/play.svg"
+                                    source: voiceController.playingPath === modelData.path
+                                            ? "icons/stop.svg" : "icons/play.svg"
                                     size: 14
-                                    color: modelData.ok ? Theme.accent : Theme.surface3
+                                    color: voiceController.playingPath === modelData.path
+                                           ? Theme.danger
+                                           : (modelData.ok ? Theme.accent : Theme.surface3)
                                 }
                                 MouseArea {
                                     anchors.fill: parent

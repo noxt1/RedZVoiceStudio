@@ -111,7 +111,7 @@ Item {
                 // ============ живой перевод ============
                 Card {
                     width: leftCol.width
-                    height: parent.height - 260 - 14
+                    height: parent.height - 240 - 14
                     padding: 18
 
                     Column {
@@ -164,9 +164,11 @@ Item {
                         }
 
                         // орб + статус
+                        // высота считается из фактических строк: заголовок 32,
+                        // волна 34, кнопки 44, громкости 34 и 4 отступа по 8
                         Item {
                             width: parent.width
-                            height: parent.height - 32 - 8 - 62 - 8
+                            height: Math.max(120, parent.height - 176)
 
                             MicOrb {
                                 anchors.centerIn: parent
@@ -215,7 +217,7 @@ Item {
                             spacing: 10
 
                             Rectangle {
-                                width: 200
+                                width: 180
                                 height: 44
                                 radius: Theme.radiusControl
                                 gradient: Theme.gradAccent
@@ -258,7 +260,7 @@ Item {
 
                             // PTT
                             Rectangle {
-                                width: 190
+                                width: 170
                                 height: 44
                                 radius: Theme.radiusControl
                                 color: pttArea.pressed ? Theme.surface3 : "#10163A"
@@ -294,9 +296,10 @@ Item {
 
                             Item { width: 1; height: 1 }
 
-                            // выбор микрофона
+                            // выбор микрофона: ширина — остаток строки,
+                            // иначе на 1280 кнопка уезжала за край карточки
                             AppCombo {
-                                width: 240
+                                width: Math.max(140, parent.width - 381)
                                 height: 44
                                 anchors.verticalCenter: parent.verticalCenter
                                 model: page.micItems
@@ -306,13 +309,39 @@ Item {
                                 onActivated: (i) => page.selectMic(i)
                             }
                         }
+
+                        // громкость: что слышите вы и как слышат вас в кабеле
+                        Row {
+                            width: parent.width
+                            spacing: 14
+
+                            AppSlider {
+                                width: (parent.width - 14) / 2
+                                label: "В наушниках"
+                                from: 0
+                                to: 150
+                                value: appState.incomingVolume
+                                suffix: "%"
+                                onMoved: (v) => appState.setIncomingVolume(Math.round(v))
+                            }
+
+                            AppSlider {
+                                width: (parent.width - 14) / 2
+                                label: "В кабеле (ваш голос)"
+                                from: 0
+                                to: 150
+                                value: appState.voiceVolume
+                                suffix: "%"
+                                onMoved: (v) => appState.setVoiceVolume(Math.round(v))
+                            }
+                        }
                     }
                 }
 
                 // ============ нижний ряд ============
                 Row {
                     width: leftCol.width
-                    height: 260
+                    height: 240
                     spacing: 14
 
                     // последние переводы
@@ -598,8 +627,12 @@ Item {
                             width: parent.width
                             spacing: 8
 
+                            // Это язык ПЕРЕВОДА моей речи (ru -> X), а не язык,
+                            // на котором я говорю. Старая подпись «Мой язык»
+                            // путала: выбрав здесь испанский, русскую речь
+                            // всё равно распознавали как русскую.
                             Text {
-                                text: "Мой язык:"
+                                text: "Перевод на:"
                                 color: Theme.textMuted
                                 font.family: Theme.fontFamilyText
                                 font.pixelSize: 11
@@ -607,7 +640,7 @@ Item {
                             }
 
                             AppCombo {
-                                width: parent.width - 76
+                                width: Math.max(120, parent.width - 96)
                                 model: page.langItems
                                 currentIndex: page.langIndex
                                 currentText: page.langItems[page.langIndex].label

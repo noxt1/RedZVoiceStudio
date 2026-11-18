@@ -35,6 +35,7 @@ class VoiceController(QObject):
     referenceChanged = Signal()
     samplesChanged = Signal()
     levelChanged = Signal(float)
+    playingChanged = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -48,6 +49,8 @@ class VoiceController(QObject):
         self._error = ""
         # отмеченные записи для сборки reference (пути wav)
         self._selected: set[str] = set()
+        # что играет сейчас (путь) — для кнопки «стоп» в интерфейсе
+        self._playing_path = ""
 
         # таймер уровня
         from PySide6.QtCore import QTimer
@@ -59,6 +62,13 @@ class VoiceController(QObject):
         self._rec_timer = QTimer(self)
         self._rec_timer.setInterval(1000)
         self._rec_timer.timeout.connect(self._tick_rec)
+
+        # следим за общим плеером: кнопка «прослушать» должна стать «стоп»,
+        # а когда запись закончилась — обратно
+        self._play_timer = QTimer(self)
+        self._play_timer.setInterval(200)
+        self._play_timer.timeout.connect(self._sync_playback)
+        self._play_timer.start()
 
         self._load_records()
         self._load_phrases()
@@ -73,6 +83,11 @@ class VoiceController(QObject):
     @Property(bool, notify=takeChanged)
     def takeOk(self) -> bool:
         return self._take_ok
+
+    @Property(str, notify=playingChanged)
+    def playingPath(self) -> str:
+        """Путь к файлу, который звучит сейчас ('' — ничего)."""
+        return self._playing_path
 
     @Property(str, notify=statusMessage)
     def takeStatus(self) -> str:
@@ -305,11 +320,36 @@ class VoiceController(QObject):
 
     @Slot(str)
     def playSample(self, path: str) -> None:
+        """Играть/остановить запись: повторный клик по той же — стоп."""
+        if not path:
+            return
         try:
             from ui import audio_play
         except Exception:
             return
-        audio_play.play_file(path)
+        audio_play.player_toggle_file(path)
+        self._sync_playback()
+
+    @Slot()
+    def stopPlayback(self) -> None:
+        """Остановить любое прослушивание."""
+        try:
+            from ui import audio_play
+        except Exception:
+            return
+        audio_play.player_stop()
+        self._sync_playback()
+
+    def _sync_playback(self) -> None:
+        """Обновить playingPath по состоянию общего плеера."""
+        try:
+            from ui import audio_play
+            path = audio_play.player_current() if audio_play.player_is_playing() else ""
+        except Exception:
+            path = ""
+        if path != self._playing_path:
+            self._playing_path = path or ""
+            self.playingChanged.emit()
 
     @Slot(int)
     def playSampleAt(self, row: int) -> None:
