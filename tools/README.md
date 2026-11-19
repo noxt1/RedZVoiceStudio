@@ -36,7 +36,6 @@
 | `check_rules.py` | реплики против правил RedZ (п. 3.2) | `app/studio_core.py` |
 | `check_sync.py` | синхронность `lines.json` ↔ плеер ↔ hotkeys | `app/studio_core.py` |
 | `setup_env.ps1` | venv движка (torch + coqui-tts) | первый запуск, документация |
-| `megrel_style.py` | грузинский → мегрельский | **нигде не импортируется** — либо подключить, либо в archive |
 
 ## 2. Установка, окружение, железо
 
@@ -151,7 +150,7 @@
 
 Перенесено `git mv` (история сохранена), ничего не удалено: файлы остаются
 в репозитории, но больше не едут в EXE и в рабочую папку. Осталось
-на месте 106 скриптов, в `archive/` — 44.
+на месте 105 скриптов, в `archive/` — 45.
 
 Скрипты в `archive/` считают корень проекта как `dirname(dirname(__file__))`,
 то есть рассчитаны на запуск из `tools/`. Если какой-то из них понадобится
@@ -198,9 +197,23 @@
 
 `find_cable_mirrors.py`, `check_cable_sources.py` — обход недоступного
 vb-audio.com (пригодится на чужой машине); `click_installer.py` —
-автоматизация установщика; `megrel_style.py` — не подключён ниоткуда;
-`test_live_src.py`, `test_live_ui.py`, `test_gui_flow.py`, `test_c72_features.py`,
-`test_c73_features.py`, `test_tree_style.py` — сценарии Tk-эпохи.
+автоматизация установщика; `test_live_src.py`, `test_live_ui.py`,
+`test_gui_flow.py`, `test_c72_features.py`, `test_c73_features.py`,
+`test_tree_style.py` — сценарии Tk-эпохи.
+
+### E. Удалённая функция (1) — в `archive/`
+
+`megrel_style.py` — «Megrel Style Engine» (грузинский → мегрельский). Функция
+выведена из продукта ещё до редизайна: мегрельский убран из `LANG_ORDER`
+(`es, en, ow, it`), Piper для него отключён (`_uses_piper` → `False`), в
+`voice_lang.LANGS` и списке языков собеседника нет `mg`/`ka`. Тесты требуют именно
+этого: `tests/test_lang_chain.py` («мегрельский должен быть удалён»),
+`tests/test_latency_and_stop.py` (`TestMegrelRemoved`),
+`tests/test_mute_and_lang.py` (`test_mg_removed_from_lang_order`).
+Модуль оставлен как история подхода — словарь лексики, правила орфографии —
+но никуда не подключён и не вызывается; если функция понадобится снова,
+её нужно возвращать вместе с языком в `LANG_ORDER` и озвучкой.
+
 
 ### Что учтено при переносе
 
