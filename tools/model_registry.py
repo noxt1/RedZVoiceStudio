@@ -227,9 +227,25 @@ def mt_models() -> list[dict]:
     return out
 
 
+def discovered() -> list[dict]:
+    """Модели из обновляемого каталога HuggingFace (если он уже собран)."""
+    try:
+        import model_discovery
+        return [m for m in model_discovery.load_models() if m.get("id")]
+    except Exception:
+        return []
+
+
 def catalog() -> list[dict]:
-    """Полный каталог: ASR + MT + TTS."""
-    return list(ASR_MODELS) + mt_models() + list(TTS_MODELS)
+    """Полный каталог: проверенные ASR + MT + TTS плюс найденные на HF.
+
+    Проверенные записи идут первыми и не дублируются: у них точные
+    требования, проверенные замером.
+    """
+    base = list(ASR_MODELS) + mt_models() + list(TTS_MODELS)
+    seen = {m["id"] for m in base}
+    extra = [m for m in discovered() if m.get("id") not in seen]
+    return base + extra
 
 
 def model_by_id(model_id: str) -> dict | None:

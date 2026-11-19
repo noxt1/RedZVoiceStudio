@@ -149,22 +149,43 @@ def add_pauses(text: str) -> str:
     """Расставить запятые по паузам — чтобы XTTS не читал одним потоком.
 
     Перевод (opus-mt) часто приходит без запятых: «Hola que tal me dices
-    como estas» — это читается слитно. Ставим запятую перед «que», «como»,
-    «porque», «entonces» и т.п., а в конце — точку, если её нет.
+    como estas» — это читается слитно и «тараторится». Ставим запятую
+    перед союзами и вводными словами, а в конце — точку.
+
+    Правка C.7.7: добавлены союзы, которые opus-mt склеивает чаще всего
+    (y, o, pero, aunque, porque, cuando, si, como, que, para, por, sin),
+    и разбивка очень длинных фраз (>14 слов) на предложения — иначе XTTS
+    произносит их на одном дыхании, «проглатывая» согласные.
     """
     t = (text or "").strip()
     if not t:
         return t
     import re
-    joins = r"\s+(que|como|porque|entonces|pero|aunque|cuando|desde|hasta|"
-    joins += r"para|por|sin|hacia|ya|muy|tambien|ademas)\b"
-    t = re.sub(joins, lambda m: ", " + m.group(1), t, flags=re.IGNORECASE)
+    # Союзы, перед которыми пауза действительно уместна. Список раньше
+    # включал «y», «o», «ya», «muy», «aqui» — запятая перед ними в испанском
+    # не ставится, и XTTS читал фразы рублеными кусками. «que/como/si»
+    # тоже убраны: «creo que», «como estas» — не граница паузы.
+    joins = (r"\s+(porque|pero|aunque|cuando|mientras|entonces|"
+             r"ademas|despues|antes|luego)\b")
+    # Пауза имеет смысл только в достаточно длинной фразе.
+    if len(t.split()) >= 6:
+        t = re.sub(joins, lambda m: ", " + m.group(1), t, flags=re.IGNORECASE)
     # не дублировать запятые
     t = re.sub(r",\s*,+", ",", t)
     t = re.sub(r"\s+,", ",", t)
     # «..., que, ...» — лишняя запятая перед союзом
     t = re.sub(r",\s+(que|como|porque|pero|entonces)\s*,", r", \1", t,
                flags=re.IGNORECASE)
+    # Очень длинные фразы режем на предложения, только если в них совсем
+    # нет знаков: точка каждые 12 слов внутри живой реплики звучит как
+    # чтение по складам. Порог поднят до 20 слов.
+    words = t.split()
+    if len(words) > 20 and not re.search(r"[.!?]", t):
+        parts = []
+        for i in range(0, len(words), 14):
+            chunk = words[i:i + 14]
+            parts.append(" ".join(chunk))
+        t = ". ".join(p.strip().rstrip(",") for p in parts if p.strip())
     if not t.endswith((".", "!", "?", "¡", "…")):
         t += "."
     return t

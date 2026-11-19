@@ -64,6 +64,7 @@ class LiveEngine(QObject):
     autoDownloadChanged = Signal()
     packageChanged = Signal()                # статус загрузки языкового пакета
     catalogChanged = Signal()                # каталог моделей
+    catalogStatusChanged = Signal()          # текст «обновляю/обновлён»
     packsChanged = Signal()                  # языковые пакеты
     downloadsChanged = Signal()              # прогресс загрузок
     modelsLoadedChanged = Signal()           # модели в памяти движка
@@ -107,6 +108,14 @@ class LiveEngine(QObject):
         self._play_queue: list[np.ndarray] = []
         self._play_lock = threading.Lock()
         self._playing = False
+        # Частота, на которой реально открылся выход. Кабель VB-Audio в
+        # WASAPI не умеет 24 кГц — раньше открытие падало молча и перевод
+        # после первой фразы просто исчезал.
+        self._play_sr = 0
+        self._play_note = ""
+        self._bridge_note = ""
+        self._bridge_check = 0.0
+        self._bridge_dropped = 0
 
         # --- очередь на перевод ---
         self._queue: list[tuple[np.ndarray, int]] = []
@@ -172,6 +181,7 @@ class LiveEngine(QObject):
         self._package_status = ""
         # Model Manager / языковые пакеты
         self._catalog: list = []
+        self._catalog_status: str = ""
         self._packs: list = []
         self._downloads: dict = {}
         self._models_loaded = False
@@ -207,6 +217,13 @@ class LiveEngine(QObject):
         self._level_timer = QTimer(self)
         self._level_timer.setInterval(100)
         self._level_timer.timeout.connect(self._emit_level)
+
+        # Русский в кабеле идёт, пока говорит человек, и глохнет ровно
+        # на время перевода (и PTT, и непрерывный режим).
+        self._duck_timer = QTimer(self)
+        self._duck_timer.setInterval(60)
+        self._duck_timer.timeout.connect(self._update_duck)
+        self._duck_timer.start()
 
         # Страховка: если движок не пришлёт incoming_done, снимаем блокировку
         # входящего перевода, чтобы захват собеседника не залип.
@@ -325,13 +342,28 @@ class LiveEngine(QObject):
 
     def _send_cmd(self, payload: dict) -> bool:
         if self._translator is None:
-            self.errorMessage.emit("движок не запущен — включи его в Настройках")
+            self.errorMessage.emit("движок не запущен — нажми «Загрузить модели» на странице «Модели»")
             return False
         return bool(self._translator.send(payload))
+
+    @Property(str, notify=catalogStatusChanged)
+    def catalogStatus(self) -> str:
+        """Что происходит с обновляемым каталогом (последний ответ HF)."""
+        return self._catalog_status
+
+    def _set_catalog_status(self, text: str) -> None:
+        self._catalog_status = text or ""
+        self.catalogStatusChanged.emit()
 
     @Slot()
     def requestCatalog(self) -> None:
         self._send_cmd({"cmd": "catalog"})
+
+    @Slot()
+    def refreshCatalog(self) -> None:
+        """Перечитать список моделей с HuggingFace (тяжёлое — в движке)."""
+        if self._send_cmd({"cmd": "refresh_catalog"}):
+            self._set_catalog_status("обновляю каталог…")
 
     @Slot()
     def requestPacks(self) -> None:
@@ -516,6 +548,11 @@ class LiveEngine(QObject):
             self._src_lang = str(getattr(state_obj, "srcLang", "ru") or "ru")
         except Exception:
             pass
+        # Подтягиваем reference активного профиля, если он уже выбран.
+        try:
+            self.setProfile(sp.get_active_profile())
+        except Exception:
+            pass
 
     def _sync_devices_from_state(self) -> None:
         """Подтянуть выбранные в UI микрофон/выход в живой движок."""
@@ -544,13 +581,28 @@ class LiveEngine(QObject):
             return
         if self._translator is None:
             script = os.path.join(sp.workspace_tools(), "live_translate.py")
-            ref = sp.output_paths()["reference"]
+            # Активный профиль: его reference.wav, а не общий workspace.
+            ref = sp.active_reference()
             if not os.path.exists(ref):
-                self._set_state("ERROR", "нет образца голоса (reference.wav)")
-                return
+                fallback = sp.output_paths()["reference"]
+                if os.path.exists(fallback):
+                    ref = fallback
+                else:
+                    self._set_state("ERROR", "нет образца голоса (reference.wav)")
+                    return
             self._translator = lc.LiveTranslator(
                 sp.engine_python(), script, ref,
                 on_event=self._on_event, on_text=self._on_text)
+            self.logLine.emit(f"reference: {ref}")
+        else:
+            # Движок уже создан, но профиль мог смениться, пока он был
+            # остановлен: обновляем путь до следующего load.
+            try:
+                ref = sp.active_reference()
+                if os.path.exists(ref):
+                    self._translator.reference = ref
+            except Exception:
+                pass
         self._set_state("LOADING")
         ok = self._translator.start()
         if not ok:
@@ -591,6 +643,51 @@ class LiveEngine(QObject):
         self._lang_code = code
         if self._translator is not None and self._translator.ready:
             self._translator.set_lang(code)
+
+    def _sync_voice_reference(self) -> None:
+        """Принудительно применить reference активного профиля.
+
+        Нужно после загрузки моделей: движок стартует с путём из argv, а
+        профиль могли переключить, пока шла загрузка. Без этого TTS
+        оставался с прежним тембром — «клон не применяется».
+        """
+        tr = self._translator
+        if tr is None:
+            return
+        ref = sp.active_reference()
+        if not os.path.exists(ref):
+            fallback = sp.output_paths()["reference"]
+            if os.path.exists(fallback):
+                ref = fallback
+        if not os.path.exists(ref):
+            return
+        tr.reference = ref
+        if tr.ready:
+            try:
+                tr.set_reference(ref)
+                name = sp.get_active_profile() or "по умолчанию"
+                self.logLine.emit(f"голос активного профиля: {name}")
+            except Exception as exc:  # noqa: BLE001
+                self.logLine.emit(f"голос не применился: {exc}")
+
+    @Slot(str)
+    def setProfile(self, name: str) -> None:
+        """Сменить голосовой профиль на лету (без перезагрузки моделей)."""
+        name = (name or "").strip()
+        ref = sp.profile_reference(name) if name else sp.output_paths()["reference"]
+        if not os.path.exists(ref):
+            self.logLine.emit(f"у профиля «{name or 'по умолчанию'}» нет reference.wav")
+            return
+        tr = self._translator
+        if tr is None:
+            return
+        tr.reference = ref
+        if tr.ready:
+            try:
+                tr.set_reference(ref)
+                self.logLine.emit(f"голос переключён: {name or 'по умолчанию'}")
+            except Exception as exc:
+                self.logLine.emit(f"голос не переключился: {exc}")
 
     @Slot(bool)
     def setOutgoing(self, on: bool) -> None:
@@ -649,6 +746,14 @@ class LiveEngine(QObject):
     def setIncomingVolume(self, percent: int) -> None:
         """Громкость входящего перевода (проценты, 0..150)."""
         self._incoming_volume = max(0.0, min(1.5, float(percent) / 100.0))
+        # Живой мост держит свою громкость наушников — обновляем сразу,
+        # иначе ползунок менял только сохранённое число.
+        b = self.bridge
+        if b is not None and getattr(b, "running", False):
+            try:
+                b.set_gains(monitor_gain=self._incoming_volume)
+            except Exception:
+                pass
         self.incomingChanged.emit()
 
     @Slot(int)
@@ -687,6 +792,12 @@ class LiveEngine(QObject):
     def setVolume(self, percent: int) -> None:
         """Громкость синтезированного голоса (проценты, 0..200)."""
         self._volume = max(0.0, min(2.0, float(percent) / 100.0))
+        b = self.bridge
+        if b is not None and getattr(b, "running", False):
+            try:
+                b.set_gains(phrase_gain=self._volume)
+            except Exception:
+                pass
 
     @Slot(int)
     def setLiveliness(self, level: int) -> None:
@@ -895,7 +1006,45 @@ class LiveEngine(QObject):
         floor = self._noise if self._noise > 0 else 0.001
         if seg_rms < floor * 2.2:
             return
+        # Убираем гул/шипение комнаты до отправки в Whisper: высокочастотный
+        # фильтр + мягкий гейт по кадрам. Это не «шумодав» уровня RTX Voice,
+        # но заметно снижает ложные фразы на фоновом телевизоре/вентиляторе.
+        audio = self._denoise(audio)
         self._queue_translate(audio, SR_REC)
+
+    @staticmethod
+    def _denoise(audio: np.ndarray) -> np.ndarray:
+        """Высокочастотный фильтр (80 Гц) + мягкий гейт тихих кадров."""
+        if audio.size < 256:
+            return audio
+        x = audio.astype(np.float32, copy=True)
+        x -= float(x.mean())
+        # lowpass через скользящее среднее, highpass = x - lowpass
+        n = max(8, int(SR_REC / 80.0))
+        if n < len(x):
+            cs = np.cumsum(np.pad(x, (n, 0), mode="edge"), dtype=np.float64)
+            low = (cs[n:] - cs[:-n]) / float(n)
+            x = (x - low).astype(np.float32)
+        # гейт: кадры тише фонового шума приглушаем, а не режем в ноль
+        win = max(64, int(SR_REC * 0.01))
+        count = len(x) // win
+        if count >= 4:
+            frames = x[:count * win].reshape(count, win)
+            rms = np.sqrt((frames.astype(np.float64) ** 2).mean(axis=1))
+            floor = float(np.percentile(rms, 15))
+            # Мягкий expander: только реально шумные кадры. Агрессивный гейт
+            # 0.15 срезал тихие согласные и голос звучал «рваным».
+            thr = max(floor * 1.4, 0.002)
+            gain = np.where(rms < thr, 0.6, 1.0)
+            # сглаживаем переходы, чтобы не было щелчков
+            kernel = np.ones(3, dtype=np.float64) / 3.0
+            gain = np.convolve(gain, kernel, mode="same")
+            envelope = np.repeat(gain, win)[:len(x)]
+            x = x * envelope.astype(np.float32)
+        peak = float(np.abs(x).max()) if x.size else 0.0
+        if peak > 0.98:
+            x = x / peak * 0.98
+        return x
 
     @staticmethod
     def _trim_silence(audio: np.ndarray) -> np.ndarray:
@@ -954,16 +1103,65 @@ class LiveEngine(QObject):
     # ==================================================================
     # ВОСПРОИЗВЕДЕНИЕ
     # ==================================================================
+    def _log_play(self, text: str) -> None:
+        """Записать в лог профиля, что происходит с выводом звука.
+
+        Без этого поломка вывода выглядела как «перевод пропал»: ошибка
+        открытия устройства молча глоталась.
+        """
+        try:
+            tr = self._translator
+            if tr is not None:
+                tr._diag_log("[play] " + text)
+        except Exception:
+            pass
+        try:
+            self.logLine.emit(text)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _resample(data: np.ndarray, src: int, dst: int) -> np.ndarray:
+        """Линейный ресемплинг (scipy в EXE нет)."""
+        if data is None or len(data) == 0:
+            return data
+        if not src or not dst or int(src) == int(dst):
+            return data
+        n_out = int(round(len(data) * float(dst) / float(src)))
+        if n_out <= 0 or len(data) < 2:
+            return data
+        x_in = np.arange(len(data), dtype=np.float64)
+        x_out = np.linspace(0, len(data) - 1, n_out)
+        return np.interp(x_out, x_in, data).astype(np.float32)
+
     def _emit_audio(self, pcm: np.ndarray) -> None:
-        if self._volume != 1.0:
-            pcm = np.clip(pcm * self._volume, -1.0, 1.0)
+        if pcm is None or len(pcm) == 0:
+            return
         bridge = self.bridge
         if bridge is not None and getattr(bridge, "running", False):
-            if bridge.push_pcm(pcm, lc.SR_TTS):
-                return
+            try:
+                # Громкости раздельные: phrase_gain — что уходит в кабель
+                # (ползунок «Перевод в кабеле»), monitor_gain — что слышит
+                # игрок в наушниках («Перевод в наушниках»). Раньше мост
+                # получал уже усиленный PCM и фиксированный monitor_gain,
+                # поэтому ползунок наушников ничего не менял.
+                bridge.set_gains(phrase_gain=self._volume)
+                if bridge.push_pcm(pcm, lc.SR_TTS):
+                    return
+            except Exception as exc:  # noqa: BLE001
+                if self._bridge_note != str(exc):
+                    self._bridge_note = str(exc)
+                    self._log_play(f"мост не принял аудио: {exc}")
+        if self._volume != 1.0:
+            pcm = np.clip(pcm * self._volume, -1.0, 1.0)
         with self._play_lock:
-            self._play_queue.append(pcm)
+            sr = self._play_sr or lc.SR_TTS
+            self._play_queue.append(self._resample(pcm, lc.SR_TTS, sr))
         self._ensure_playback()
+
+    # Частоты, которые пробуем открыть на выходе по очереди. 24 кГц нет у
+    # WASAPI-кабеля, поэтому перебираем до рабочей.
+    PLAYBACK_RATES = (lc.SR_TTS, 48000, 44100, 32000, 16000)
 
     def _ensure_playback(self) -> None:
         import sounddevice as sd
@@ -972,52 +1170,103 @@ class LiveEngine(QObject):
                 return
             self._playing = True
             out = self._out_idx
-        try:
-            self._play_stream = sd.OutputStream(
-                device=out, channels=1, samplerate=lc.SR_TTS,
-                dtype="float32", blocksize=int(lc.SR_TTS * 0.05),
-                callback=self._play_callback)
-            self._play_stream.start()
-        except Exception:
+            current = self._play_sr
+        rates = ([current] if current else []) + [
+            r for r in self.PLAYBACK_RATES if r != current]
+        err = None
+        stream = None
+        rate = 0
+        for candidate in rates:
+            try:
+                stream = sd.OutputStream(
+                    device=out, channels=1, samplerate=candidate,
+                    dtype="float32", blocksize=int(candidate * 0.05),
+                    callback=self._play_callback)
+                stream.start()
+            except Exception as exc:  # noqa: BLE001
+                err = exc
+                stream = None
+                continue
+            rate = candidate
+            break
+        if stream is None:
             with self._play_lock:
                 self._playing = False
+                # не копим минуты тишины в памяти
+                total = sum(len(c) for c in self._play_queue)
+                while self._play_queue and total > lc.SR_TTS * 20:
+                    total -= len(self._play_queue.pop(0))
+            note = f"выход не открылся: {err}"
+            if note != self._play_note:
+                self._play_note = note
+                self._log_play(note)
             return
+        with self._play_lock:
+            if rate != self._play_sr:
+                src = self._play_sr or lc.SR_TTS
+                if src != rate:
+                    self._play_queue = [
+                        self._resample(ch, src, rate) for ch in self._play_queue]
+                self._play_sr = rate
+            self._play_stream = stream
+        note = f"выход {rate} Гц" + ("" if out is None else f", устройство {out}")
+        if note != self._play_note:
+            self._play_note = note
+            self._log_play("воспроизведение — " + note)
         threading.Thread(target=self._drain_play, daemon=True).start()
 
     def _play_callback(self, outdata, frames, time_info, status) -> None:
-        need = outdata.shape[0]
-        out = np.zeros(need, dtype=np.float32)
-        with self._play_lock:
-            while need > 0 and self._play_queue:
-                chunk = self._play_queue[0]
-                take = min(need, len(chunk))
-                out[:take] = chunk[:take]
-                if take < len(chunk):
-                    self._play_queue[0] = chunk[take:]
-                else:
-                    self._play_queue.pop(0)
-                need -= take
-        outdata[:, 0] = out
+        # Исключение в аудио-колбэке PortAudio трактует как отказ потока:
+        # дальше он молчит до переоткрытия. Поэтому глушим всё здесь.
+        try:
+            need = outdata.shape[0]
+            out = np.zeros(need, dtype=np.float32)
+            pos = 0
+            with self._play_lock:
+                while pos < need and self._play_queue:
+                    chunk = self._play_queue[0]
+                    take = min(need - pos, len(chunk))
+                    if take <= 0:
+                        self._play_queue.pop(0)
+                        continue
+                    out[pos:pos + take] = chunk[:take]
+                    if take < len(chunk):
+                        self._play_queue[0] = chunk[take:]
+                    else:
+                        self._play_queue.pop(0)
+                    pos += take
+            outdata[:, 0] = out
+        except Exception:
+            try:
+                outdata.fill(0)
+            except Exception:
+                pass
 
     def _drain_play(self) -> None:
         import time
+        # Пауза перед закрытием: между фразами поток не переоткрываем.
+        # Каждое открытие/закрытие — шанс, что устройство (WASAPI-кабель)
+        # откажет, и перевод пропадёт.
+        idle = 0.0
         while True:
             time.sleep(0.2)
             with self._play_lock:
-                empty = not self._play_queue
-                if empty and self._play_stream is not None:
-                    stream = self._play_stream
-                    self._play_stream = None
-                    self._playing = False
-                else:
-                    stream = None
+                if self._play_queue:
+                    idle = 0.0
+                    continue
+                idle += 0.2
+                if idle < 2.0:
+                    continue
+                stream = self._play_stream
+                self._play_stream = None
+                self._playing = False
             if stream is not None:
                 try:
                     stream.stop()
                     stream.close()
                 except Exception:
                     pass
-                break
+            break
 
     def _playback_busy(self) -> bool:
         with self._play_lock:
@@ -1040,6 +1289,52 @@ class LiveEngine(QObject):
     # ==================================================================
     # DUCING (заглушение русского в кабеле)
     # ==================================================================
+    def _update_duck(self) -> None:
+        """Глушить микрофон в кабеле, пока звучит перевод."""
+        bridge = self.bridge
+        if bridge is None or not getattr(bridge, "running", False):
+            return
+        try:
+            pending = bool(bridge.stream_pending())
+        except Exception:
+            pending = False
+        need = bool(self._busy or self._playback_busy() or pending)
+        try:
+            bridge.set_duck(need)
+        except Exception:
+            pass
+        self._check_bridge(bridge)
+        # Пока звучит СВОЙ перевод, захват игры/наушников должен быть
+        # выключен: иначе он ловит наш же Spanish из наушников и озвучивает
+        # его обратно русским — слышно как «дублирование себя».
+        try:
+            self._suppress_capture(need)
+        except Exception:
+            pass
+
+    def _check_bridge(self, bridge) -> None:
+        """Раз в секунду: жив ли выход моста и не теряются ли чанки."""
+        import time
+        now = time.monotonic()
+        if now - self._bridge_check < 1.0:
+            return
+        self._bridge_check = now
+        try:
+            msg = bridge.ensure_alive()
+        except Exception:
+            msg = ""
+        if msg and msg != self._bridge_note:
+            self._bridge_note = msg
+            self._log_play("мост: " + msg)
+        try:
+            dropped = int(getattr(bridge, "stream_dropped", 0))
+        except Exception:
+            dropped = 0
+        if dropped != self._bridge_dropped:
+            self._bridge_dropped = dropped
+            self._log_play(
+                f"мост: очередь переполнена, потеряно чанков {dropped}")
+
     def _duck(self, flag: bool) -> None:
         bridge = self.bridge
         if bridge is not None and getattr(bridge, "running", False):
@@ -1316,17 +1611,20 @@ class LiveEngine(QObject):
         if pcm is None or len(pcm) == 0:
             return
         data = np.asarray(pcm, dtype=np.float32)
-        if self._incoming_volume != 1.0:
-            data = np.clip(data * self._incoming_volume, -1.0, 1.0)
         bridge = self.bridge
         # Мост умеет отдельную шину прослушивания: только если она есть.
         if (bridge is not None and getattr(bridge, "running", False)
                 and getattr(bridge, "monitor_device", None) is not None):
             try:
+                # Громкость наушников применяет мост (monitor_gain);
+                # иначе ползунок «Перевод в наушниках» не действовал бы.
+                bridge.set_gains(monitor_gain=self._incoming_volume)
                 if bridge.push_incoming_pcm(data, lc.SR_TTS):
                     return
             except Exception:
                 pass
+        if self._incoming_volume != 1.0:
+            data = np.clip(data * self._incoming_volume, -1.0, 1.0)
         with self._incoming_lock:
             self._incoming_q.append(data)
         self._ensure_incoming_playback()
@@ -1353,16 +1651,20 @@ class LiveEngine(QObject):
     def _incoming_callback(self, outdata, frames, time_info, status) -> None:
         need = outdata.shape[0]
         out = np.zeros(need, dtype=np.float32)
+        pos = 0
         with self._incoming_lock:
-            while need > 0 and self._incoming_q:
+            while pos < need and self._incoming_q:
                 chunk = self._incoming_q[0]
-                take = min(need, len(chunk))
-                out[:take] = chunk[:take]
+                take = min(need - pos, len(chunk))
+                if take <= 0:
+                    self._incoming_q.pop(0)
+                    continue
+                out[pos:pos + take] = chunk[:take]
                 if take < len(chunk):
                     self._incoming_q[0] = chunk[take:]
                 else:
                     self._incoming_q.pop(0)
-                need -= take
+                pos += take
         outdata[:, 0] = out
 
     def _drain_incoming(self) -> None:
@@ -1495,6 +1797,15 @@ class LiveEngine(QObject):
             self.autoDownloadChanged.emit()
         elif kind == "catalog":
             self._apply_catalog(data)
+        elif kind == "catalog_refreshed":
+            if data.get("ok"):
+                self._set_catalog_status(
+                    "обновлено: " + str(data.get("found", 0)) + " моделей"
+                    + " (ASR " + str(data.get("asr", 0))
+                    + ", перевод " + str(data.get("mt", 0)) + ")")
+            else:
+                self._set_catalog_status(
+                    "не обновился: " + str(data.get("error") or "нет сети"))
         elif kind == "download":
             self._apply_download(data)
         elif kind == "verify":
@@ -1591,6 +1902,10 @@ class LiveEngine(QObject):
             if data.get("ready"):
                 self._set_state("READY")
                 self._push_settings()
+                # Профиль мог быть выбран, пока движок грузился: argv
+                # процесса уже не поменять, поэтому после ready явно
+                # пересобираем эмбеддинг активного профиля.
+                self._sync_voice_reference()
             elif data.get("error"):
                 self._set_state("ERROR", data["error"])
         elif kind == "lang":

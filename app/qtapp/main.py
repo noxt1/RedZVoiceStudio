@@ -69,6 +69,10 @@ def main() -> int:
     live.attach(state)
     live.recorder = state.recorder
     state._live_engine = live
+    # «Собрать из выбранных» пересобирает reference активного профиля —
+    # подхватываем его движком сразу, без перезапуска/перезагрузки моделей.
+    voices.referenceChanged.connect(
+        lambda: live.setProfile(state.activeProfile))
 
     prompt_model = PromptModel()
     take_model = TakeModel()

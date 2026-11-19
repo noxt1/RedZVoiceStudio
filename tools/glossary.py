@@ -50,6 +50,11 @@ DEFAULT_ENTRIES: list[dict] = [
     {"src": "bounty", "ru": "награда за голову", "en": "bounty",
      "es": "recompensa"},
     {"src": "posse", "ru": "банда", "en": "posse", "es": "banda"},
+    # Частая ошибка ASR испанского: burro/asno слышится как show.
+    {"src": "burro", "ru": "осёл", "en": "donkey", "es": "burro",
+     "it": "asino"},
+    {"src": "asno", "ru": "осёл", "en": "donkey", "es": "asno",
+     "it": "asino"},
 ]
 
 

@@ -140,11 +140,12 @@ class Sidebar(tk.Frame):
 
     def show(self):
         self._visible = True
-        self.pack(side="right", fill="y", expand=False)
+        # Основное окно использует grid — используем grid и здесь
+        self.grid(row=0, column=2, sticky="ns")
 
     def hide(self):
         self._visible = False
-        self.pack_forget()
+        self.grid_remove()
 
     def toggle(self):
         if self._visible:

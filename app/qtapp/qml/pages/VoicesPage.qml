@@ -10,6 +10,29 @@ Item {
     property var profileItems: []
     property int profileIndex: 0
     property string newProfile: ""
+    property int takeTopIndex: 0
+    property real micLevel: 0.0
+    property real pressBoost: 0.0
+
+    PropertyAnimation {
+        id: pressAnim
+        target: page
+        property: "pressBoost"
+        to: 0.0
+        duration: 620
+        easing.type: Easing.OutCubic
+    }
+    function micPulse() {
+        page.pressBoost = 1.0
+        pressAnim.restart()
+    }
+
+    function keepTakeScroll() {
+        // Запоминаем ВЕРХНЮЮ строку списка до пересборки модели:
+        // иначе после отметки галочки ListView прыгал в начало.
+        if (takeList.count > 0)
+            page.takeTopIndex = Math.max(0, takeList.indexAt(0, takeList.contentY + 1))
+    }
 
     readonly property var engineItems: [
         { "label": "Русский (RUS) – XTTS", "value": "xtts" }
@@ -40,6 +63,25 @@ Item {
     Connections {
         target: appState
         function onProfilesChanged() { page.refreshProfiles() }
+    }
+
+    Connections {
+        target: voiceController
+        function onSamplesChanged() {
+            var idx = page.takeTopIndex
+            Qt.callLater(function() {
+                if (takeList.count > 0)
+                    takeList.positionViewAtIndex(Math.min(idx, takeList.count - 1),
+                                                 ListView.Beginning)
+            })
+        }
+        function onLevelChanged(v) { page.micLevel = v }
+    }
+
+    Connections {
+        target: liveEngine
+        function onTranslationStarted() { page.micPulse() }
+        function onTranslationFinished() { page.micPulse() }
     }
 
     // Страница выше окна на 1280×840 — прокручиваем, чтобы нижняя карточка
@@ -127,9 +169,11 @@ Item {
                         Text {
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            text: appState.activeProfile !== "" ? appState.activeProfile : "Профиль по умолчанию"
+                            // профиль + фактический reference (длительность/отпечаток):
+                            // так видно, что именно уйдёт в XTTS
+                            text: appState.voiceInfoText()
                             elide: Text.ElideRight
-                            width: 200
+                            width: 280
                             horizontalAlignment: Text.AlignRight
                             color: Theme.accentBright
                             font.family: Theme.fontFamilyText
@@ -153,8 +197,9 @@ Item {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     width: Math.min(parent.width, parent.height - 40)
                                     height: width
-                                    level: voiceController.recording ? 0.9 : 0.25
-                                    active: voiceController.recording || liveEngine.busy
+                                    level: voiceController.recording ? Math.max(0.12, page.micLevel) : 0.0
+                                    active: voiceController.recording
+                                    pressBoost: page.pressBoost
                                 }
 
                                 Text {
@@ -182,8 +227,9 @@ Item {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     width: Math.min(parent.width, parent.height - 40)
                                     height: width
-                                    level: liveEngine.busy ? 0.8 : 0.2
+                                    level: liveEngine.busy ? 0.35 : 0.0
                                     active: liveEngine.busy
+                                    pressBoost: page.pressBoost
                                     iconSource: "icons/volume.svg"
                                     ringColor: Theme.accentCyan
                                     ringColor2: Theme.accentBlue
@@ -204,8 +250,9 @@ Item {
                     WaveBars {
                         width: parent.width
                         height: 40
-                        level: voiceController.recording ? 0.9 : 0.3
-                        active: voiceController.recording || liveEngine.busy
+                        level: voiceController.recording ? Math.max(0.12, page.micLevel) : 0.0
+                        active: voiceController.recording
+                        pressBoost: page.pressBoost
                     }
 
                     Row {
@@ -556,7 +603,10 @@ Item {
                         text: voiceController.recording ? "Остановить" : "Записать"
                         iconSource: voiceController.recording ? "icons/stop.svg" : "icons/record.svg"
                         baseColor: voiceController.recording ? Theme.danger : Theme.accent
-                        onClicked: voiceController.toggleRecording()
+                        onClicked: {
+                            page.micPulse()
+                            voiceController.toggleRecording()
+                        }
                     }
                 }
 
@@ -577,21 +627,30 @@ Item {
                             controlHeight: 30
                             text: "Выбрать все"
                             flat: true
-                            onClicked: voiceController.selectAllSamples()
+                            onClicked: {
+                                page.keepTakeScroll()
+                                voiceController.selectAllSamples()
+                            }
                         }
                         AppButton {
                             width: 130
                             controlHeight: 30
                             text: "Снять выбор"
                             flat: true
-                            onClicked: voiceController.clearSelection()
+                            onClicked: {
+                                page.keepTakeScroll()
+                                voiceController.clearSelection()
+                            }
                         }
                         AppButton {
                             width: Math.max(210, parent.width - 276)
                             controlHeight: 30
-                            text: voiceController.selectedCount > 0
-                                  ? "Собрать из отмеченных (" + voiceController.selectedCount + ")"
-                                  : "Собрать из всех"
+                            enabled: !voiceController.referenceBusy
+                            text: voiceController.referenceBusy
+                                  ? "Собираю…"
+                                  : (voiceController.selectedCount > 0
+                                     ? "Собрать из отмеченных (" + voiceController.selectedCount + ")"
+                                     : "Собрать из всех")
                             onClicked: voiceController.buildReference()
                         }
                     }
@@ -624,7 +683,19 @@ Item {
                     }
                 }
 
+                Text {
+                    width: parent.width
+                    visible: voiceController.referenceNote !== ""
+                    text: voiceController.referenceNote
+                    color: voiceController.referenceBusy
+                           ? Theme.accentBright : Theme.textMuted
+                    font.family: Theme.fontFamilyText
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                }
+
                 ListView {
+                    id: takeList
                     width: parent.width
                     height: Math.max(120, parent.height - 184)
                     clip: true
@@ -682,7 +753,10 @@ Item {
                                     anchors.fill: parent
                                     enabled: modelData.ok && !!modelData.path
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: voiceController.toggleSample(modelData.path)
+                                    onClicked: {
+                                        page.keepTakeScroll()
+                                        voiceController.toggleSample(modelData.path)
+                                    }
                                 }
                             }
 

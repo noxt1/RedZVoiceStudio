@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import RedZ 1.0
 
 /// Настройки — неоновый каркас: общие параметры, перевод/модели,
@@ -12,6 +13,8 @@ Item {
     property int micIndex: -1
     property var outItems: []
     property int outIndex: -1
+    property var monitorItems: []
+    property int monitorIndex: 0
 
     readonly property var uiLangItems: [{ "label": "Русский", "value": "ru" }]
     readonly property var bankLangItems: [
@@ -63,6 +66,10 @@ Item {
         for (var j = 0; j < outs.length; j++) mo.push({ "label": outs[j].name, "value": outs[j].id })
         page.micItems = mi
         page.outItems = mo
+        var mm = [{ "label": "авто (наушники по умолчанию)", "value": -1 }]
+        for (var m = 0; m < outs.length; m++)
+            mm.push({ "label": outs[m].name, "value": outs[m].id })
+        page.monitorItems = mm
 
         var idx = -1
         for (var k = 0; k < mi.length; k++) if (mi[k].value === appState.inDevice) idx = k
@@ -70,6 +77,10 @@ Item {
         var odx = -1
         for (var n = 0; n < mo.length; n++) if (mo[n].value === appState.outDevice) odx = n
         page.outIndex = odx
+        var mdx = 0
+        for (var p = 0; p < mm.length; p++)
+            if (mm[p].value === appState.monitorDevice) mdx = p
+        page.monitorIndex = mdx
     }
 
     Component.onCompleted: refreshDevices()
@@ -147,6 +158,19 @@ Item {
             contentWidth: width
             contentHeight: body.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
+            // Без видимого ползунка было непонятно, что низ «Управления»
+            // не обрезан, а просто требует прокрутки.
+            ScrollBar.vertical: ScrollBar {
+                policy: body.implicitHeight > parent.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                width: 6
+                contentItem: Rectangle {
+                    implicitWidth: 6
+                    radius: 3
+                    color: Theme.accent
+                    opacity: 0.55
+                }
+                background: Rectangle { color: "transparent" }
+            }
 
             Row {
                 id: body
@@ -215,6 +239,7 @@ Item {
                                 Icon { source: "icons/bolt.svg"; color: Theme.textMuted; size: 16; anchors.verticalCenter: parent.verticalCenter }
                                 Text { text: "Автозагрузка моделей"; width: 180; color: Theme.textSecondary; font.family: Theme.fontFamilyText; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                                 AppSwitch { checked: appState.autoStartEngine; onToggled: (on) => appState.setAutoStartEngine(on) }
+                                Text { text: "по умолчанию выкл."; color: Theme.textMuted; font.family: Theme.fontFamilyText; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
                             }
 
                             Row {
@@ -344,7 +369,7 @@ Item {
                             }
 
                             Text {
-                                text: "Непрерывный режим · " + appState.hotkeyPretty()
+                                text: "Говорить (удерживать) · " + appState.hotkeyPretty()
                                 color: Theme.textMuted
                                 font.family: Theme.fontFamilyText
                                 font.pixelSize: 11
@@ -450,6 +475,20 @@ Item {
                                 }
                             }
 
+                            Text { text: "Наушники для перевода"; color: Theme.textSecondary; font.family: Theme.fontFamilyText; font.pixelSize: 12 }
+                            AppCombo {
+                                width: parent.width
+                                model: page.monitorItems
+                                currentIndex: page.monitorIndex
+                                currentText: page.monitorIndex >= 0 && page.monitorItems.length > 0
+                                             ? page.monitorItems[page.monitorIndex].label
+                                             : "авто (наушники по умолчанию)"
+                                onActivated: (i) => {
+                                    page.monitorIndex = i
+                                    appState.setMonitorDevice(page.monitorItems[i].value)
+                                }
+                            }
+
                             AppButton {
                                 width: parent.width
                                 text: "Настроить под кабель"
@@ -510,6 +549,27 @@ Item {
                                 font.family: Theme.fontFamilyMono
                                 font.pixelSize: 11
                                 lineHeight: 1.3
+                            }
+
+                            Rectangle { width: parent.width; height: 1; color: Theme.border }
+
+                            Row {
+                                width: parent.width
+                                spacing: 8
+                                Text { text: "Русский микрофон в кабеле"; color: Theme.textSecondary; font.family: Theme.fontFamilyText; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                                Item { width: 1; height: 1 }
+                                AppSwitch {
+                                    checked: appState.cableMicOn
+                                    onToggled: (on) => appState.setCableMic(on)
+                                }
+                            }
+                            Text {
+                                width: parent.width
+                                text: "Выключено: в игру уходит только перевод. Включено: собеседники слышат и ваш русский голос."
+                                color: Theme.textMuted
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
                             }
 
                             Rectangle { width: parent.width; height: 1; color: Theme.border }

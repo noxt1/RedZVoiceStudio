@@ -89,12 +89,19 @@ class AppState(QObject):
         self.hotkeys = hk.GlobalHotkeys()
         self._hk_queue: list[str] = []
         self._hk_lock = threading.Lock()
+        self._ptt_active = False
 
         # --- таймеры Qt ---
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(50)
         self._poll_timer.timeout.connect(self._poll)
         self._poll_timer.start()
+
+        # отпускание push-to-talk: WM_HOTKEY приходит только на нажатии
+        self._ptt_timer = QTimer(self)
+        self._ptt_timer.setInterval(30)
+        self._ptt_timer.timeout.connect(self._poll_ptt_release)
+        self._ptt_timer.start()
 
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(2000)
@@ -114,17 +121,33 @@ class AppState(QObject):
         # «всё готово» для существующих установок.
         fresh = int(cfg.get("defaults_v", 1) or 1) < 2
         self._hints_on = bool(cfg.get("hints", True))
-        self._auto_start = True if fresh else bool(cfg.get("auto_start_engine", True))
+        # Модели НЕ грузим сами при старте: это явное действие пользователя.
+        # Старые ui_settings.json содержали auto_start_engine=true, поэтому
+        # одного значения мало — нужен ещё флаг «пользователь включал сам».
+        self._auto_start = bool(cfg.get("auto_start_engine", False)) and \
+            bool(cfg.get("auto_start_explicit", False))
+        self._auto_start_explicit = bool(cfg.get("auto_start_explicit", False))
         self._fullscreen = bool(cfg.get("fullscreen", False))
         self._voice_volume = int(cfg.get("voice_volume", 85))
         # входящий перевод (речь собеседника -> RU -> наушники)
         self._incoming_on = bool(cfg.get("incoming_on", False))
         self._incoming_volume = int(cfg.get("incoming_volume", 100))
+        # русский микрофон в кабель: по умолчанию ВКЛЮЧЕН — собеседники
+        # слышат живую речь; на время перевода мост её заглушает.
+        # Переключатель позволяет полностью убрать русский из кабеля.
+        self._cable_mic = bool(cfg.get("cable_mic", True))
+        # Один раз чиним старую миграцию: раньше дефолт был false,
+        # и сохранённый false не давал русскому идти в кабель.
+        if int(cfg.get("cable_mic_v", 0) or 0) < 1:
+            self._cable_mic = True
+        self._cable_mic_migrated = True
+        # наушники для входящего/исходящего перевода (-1 = авто)
+        self._monitor_device = int(cfg.get("monitor_device", -1) or -1)
         # исходящий канал можно выключить независимо от входящего
         self._outgoing_on = bool(cfg.get("outgoing_on", True))
         # автоскачивание языковых пакетов — по умолчанию ВЫКЛЮЧЕНО
         self._auto_download = bool(cfg.get("auto_download", False))
-        # глобальная клавиша непрерывного режима (меняется в Настройках)
+        # глобальная клавиша push-to-talk (меняется в Настройках)
         self._hotkey = str(cfg.get("hotkey", "alt+capslock") or "alt+capslock")
         # при старте всё уже включено: хоткеи, мост к кабелю, движок
         self._hotkeys_pref = True if fresh else bool(cfg.get("hotkeys_on", True))
@@ -277,8 +300,18 @@ class AppState(QObject):
 
     @Property(int, notify=settingsChanged)
     def voiceVolume(self) -> int:
-        """Громкость голоса в кабель, проценты (50..150)."""
+        """Громкость перевода в кабель, проценты (0..150)."""
         return self._voice_volume
+
+    @Property(bool, notify=settingsChanged)
+    def cableMicOn(self) -> bool:
+        """Приглушить русский в кабеле (False = микрофон проходит)."""
+        return self._cable_mic
+
+    @Property(int, notify=settingsChanged)
+    def monitorDevice(self) -> int:
+        """Устройство наушников для перевода (-1 — выбрать автоматически)."""
+        return self._monitor_device
 
     @Property(str, notify=profilesChanged)
     def activeProfile(self) -> str:
@@ -398,6 +431,7 @@ class AppState(QObject):
     @Slot(bool)
     def setAutoStartEngine(self, on: bool) -> None:
         self._auto_start = bool(on)
+        self._auto_start_explicit = True
         self._save_settings()
         self.settingsChanged.emit()
 
@@ -410,17 +444,51 @@ class AppState(QObject):
     @Slot(int)
     def setVoiceVolume(self, value: int) -> None:
         self._voice_volume = max(0, min(150, int(value)))
-        # громкость голоса = усиление микрофона в миксе моста
-        if self.bridge is not None:
-            try:
-                self.bridge.mic_gain = self._voice_volume / 100.0
-            except Exception:
-                pass
-        # …и громкость синтеза (кабель/динамики)
+        # Это громкость ПЕРЕВОДА в кабеле, а не микрофона: mic_gain не трогаем.
         eng = getattr(self, "_live_engine", None)
         if eng is not None:
             try:
                 eng.setVolume(self._voice_volume)
+            except Exception:
+                pass
+        if self.bridge is not None:
+            try:
+                self.bridge.set_gains(
+                    phrase_gain=max(0.0, min(2.0, self._voice_volume / 100.0)))
+            except Exception:
+                pass
+        self._save_settings()
+        self.settingsChanged.emit()
+
+    @Slot(bool)
+    def setCableMic(self, on: bool) -> None:
+        """Включить/выключить русский микрофон в кабеле."""
+        self._cable_mic = bool(on)
+        if self.bridge is not None:
+            try:
+                self.bridge.mic_gain = 1.0 if self._cable_mic else 0.0
+            except Exception:
+                pass
+        self._save_settings()
+        self.settingsChanged.emit()
+        self.statusMessage.emit(
+            "русский микрофон в кабеле включён" if self._cable_mic
+            else "русский микрофон в кабеле выключен", "info")
+
+    @Slot(int)
+    def setMonitorDevice(self, idx: int) -> None:
+        """Выбрать наушники для перевода (-1 — авто)."""
+        self._monitor_device = int(idx)
+        if self.bridge is not None:
+            dev = None if self._monitor_device < 0 else self._monitor_device
+            try:
+                self.bridge.set_monitor_device(dev)
+            except Exception as exc:
+                self.statusMessage.emit(f"наушники: {exc}", "err")
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.setMonitorDevice(self._monitor_device)
             except Exception:
                 pass
         self._save_settings()
@@ -455,6 +523,14 @@ class AppState(QObject):
         if eng is not None:
             try:
                 eng.setIncomingVolume(self._incoming_volume)
+            except Exception:
+                pass
+        # Мост держит отдельную громкость для наушников: без этого
+        # ползунок менял только сохранённое значение.
+        if self.bridge is not None:
+            try:
+                self.bridge.set_gains(
+                    monitor_gain=max(0.0, min(1.5, self._incoming_volume / 100.0)))
             except Exception:
                 pass
         self._save_settings()
@@ -535,6 +611,14 @@ class AppState(QObject):
             return
         self._active_profile = name
         self.profilesChanged.emit()
+        # Если движок уже загружен, меняем тембр на лету — без перезапуска
+        # и без повторной загрузки моделей.
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.setProfile(name)
+            except Exception as exc:
+                self.statusMessage.emit(f"профиль в движке: {exc}", "warn")
         self.statusMessage.emit(f"профиль голоса: {name}", "ok")
 
     @Slot(str, str)
@@ -714,13 +798,14 @@ class AppState(QObject):
 
     @Slot(result=bool)
     def toggleHotkeys(self) -> bool:
-        """Включить/выключить глобальный хоткей непрерывного режима."""
+        """Включить/выключить глобальный хоткей push-to-talk."""
         if self._hotkeys_on:
             try:
                 self.hotkeys.unregister_prefix("live:")
             except Exception:
                 pass
             self._hotkeys_on = False
+            self._ptt_active = False
             self.hotkeysChanged.emit(False)
             self.statusMessage.emit("горячие клавиши выключены", "info")
             return False
@@ -733,12 +818,13 @@ class AppState(QObject):
             return False
 
         combo = self._hotkey or "alt+capslock"
-        ok = self.hotkeys.register(combo, "live:cont")
+        ok = self.hotkeys.register(combo, "live:ptt:down")
         self._hotkeys_on = bool(ok)
+        self._ptt_active = False
         self.hotkeysChanged.emit(self._hotkeys_on)
         if ok:
             self.statusMessage.emit(
-                f"{hk.pretty_combo(combo)} — непрерывный режим", "ok")
+                f"{hk.pretty_combo(combo)} — говорить (удерживать)", "ok")
             self._save_settings()
         else:
             self.statusMessage.emit(
@@ -753,7 +839,11 @@ class AppState(QObject):
         except Exception:
             pass
         try:
-            if self._out_device is None:
+            # Кабель должен заработать СРАЗУ при старте. _load_devices()
+            # ставит первое попавшееся устройство, поэтому при наличии виртуального
+            # кабеля принудительно перемаршрутизируем вывод на него.
+            has_cable = any(hk.is_virtual_cable(n) for _, n in self._out_list)
+            if self._out_device is None or has_cable:
                 self._auto_route()
         except Exception:
             pass
@@ -796,6 +886,54 @@ class AppState(QObject):
     def referencePath(self) -> str:
         # Активный профиль — его reference; иначе общий файл.
         return sp.active_reference()
+
+    @Slot(result=str)
+    def voiceInfoText(self) -> str:
+        """Что реально уйдёт в TTS: профиль, длительность, отпечаток файла.
+
+        Если два профиля собраны из одних и тех же дублей, их reference
+        побайтно совпадает — переключение ничего не меняет на слух. Раньше
+        это выглядело как «клон не применяется», поэтому показываем
+        отпечаток и прямо говорим о совпадении.
+        """
+        name = self._active_profile or "по умолчанию"
+        path = sp.active_reference()
+        if not os.path.exists(path):
+            return f"{name}: reference.wav не найден"
+        try:
+            import soundfile as sf
+            dur = float(sf.info(path).duration)
+        except Exception:
+            dur = 0.0
+        md5 = ""
+        try:
+            import hashlib
+            h = hashlib.md5()
+            with open(path, "rb") as fh:
+                for block in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(block)
+            md5 = h.hexdigest()[:8]
+        except Exception:
+            md5 = "?"
+        text = f"{name} · {dur:.1f} c · {md5}"
+        try:
+            for other in sp.list_profiles():
+                if other == self._active_profile:
+                    continue
+                other_ref = sp.profile_reference(other)
+                if not os.path.exists(other_ref):
+                    continue
+                oh = hashlib.md5()
+                with open(other_ref, "rb") as fh:
+                    for block in iter(lambda: fh.read(1 << 20), b""):
+                        oh.update(block)
+                if oh.hexdigest()[:8] == md5:
+                    # Важнее предупреждение, чем отпечаток: он и так одинаков.
+                    text = f"{name} · {dur:.1f} c · копия «{other}»"
+                    break
+        except Exception:
+            pass
+        return text
 
     @Slot(result=bool)
     def hasReference(self) -> bool:
@@ -931,8 +1069,12 @@ class AppState(QObject):
                 json.dump({
                     "hints": self._hints_on,
                     "auto_start_engine": self._auto_start,
+                    "auto_start_explicit": self._auto_start_explicit,
                     "fullscreen": self._fullscreen,
                     "voice_volume": self._voice_volume,
+                    "cable_mic": self._cable_mic,
+                    "cable_mic_v": 1,
+                    "monitor_device": self._monitor_device,
                     "outgoing_on": self._outgoing_on,
                     "auto_download": self._auto_download,
                     "mode": self._mode,
@@ -970,6 +1112,30 @@ class AppState(QObject):
         except Exception as exc:
             self.statusMessage.emit(f"не сохранилось: {exc}", "err")
 
+    def _pick_monitor_device(self) -> int | None:
+        """Наушники для перевода: явный выбор или устройство по умолчанию.
+
+        Кабель в качестве монитора не годится: тогда перевод снова уходит
+        в игру, а не в уши. Поэтому проверяем имя и индекс.
+        """
+        render = self._out_device
+        if self._monitor_device >= 0:
+            dev = int(self._monitor_device)
+            return None if dev == render else dev
+        names = {i: n for i, n in self._out_list}
+        try:
+            import sounddevice as sd
+            default_out = int(sd.default.device[1])
+        except Exception:
+            default_out = None
+        if default_out is not None and default_out != render \
+                and not hk.is_virtual_cable(names.get(default_out, "")):
+            return default_out
+        for idx, name in self._out_list:
+            if idx != render and not hk.is_virtual_cable(name):
+                return idx
+        return None
+
     def _start_bridge(self) -> None:
         import mic_bridge as mb
         render_idx = self._out_device
@@ -977,24 +1143,44 @@ class AppState(QObject):
         if render_idx is None:
             self.statusMessage.emit("сначала выбери устройство вывода", "err")
             return
-        monitor_dev = None
+        monitor_dev = self._pick_monitor_device()
+        render_name = next((n for i, n in self._out_list if i == render_idx), "")
+        # Микрофон пускаем в вывод ТОЛЬКО если это подтверждённый виртуальный
+        # кабель. Иначе он ушёл бы в наушники/динамики — «слышу себя сразу».
+        passthrough = bool(self._cable_mic) and hk.is_virtual_cable(render_name)
         try:
-            import sounddevice as sd
-            monitor_dev = sd.default.device[1]
-        except Exception:
-            pass
-        try:
-            # Русская речь в канал НЕ идёт: в игру уходит только перевод.
-            # Раньше микрофон проходил насквозь, и в голосовом чате было
-            # слышно и русский, и испанский.
             self.bridge = mb.MicBridge(
                 mic_device=mic_idx, render_device=render_idx,
-                mic_gain=0.0, phrase_gain=1.0,
-                monitor_device=monitor_dev, monitor_gain=1.0)
+                mic_gain=1.0 if passthrough else 0.0,
+                # Звук в кабель — по ползунку «Перевод в кабеле»,
+                # в наушники — по «Перевод в наушниках».
+                phrase_gain=max(0.0, min(2.0, self._voice_volume / 100.0)),
+                monitor_device=monitor_dev,
+                monitor_gain=max(0.0, min(1.5, self._incoming_volume / 100.0)))
             self.bridge.start()
+            # Стартовое состояние MicBridge — заглушка включена. Снимаем её
+            # только для подтверждённого кабеля; _duck_timer дальше будет
+            # приглушать микрофон на время перевода.
+            if passthrough:
+                self.bridge.set_duck(False)
             self._bridge_on = True
+            # Важно: движок должен видеть тот же мост, иначе перевод
+            # уходит в локальный OutputStream (кабель) и вообще не
+            # попадает в наушники, а заглушка микрофона не работает.
+            eng = getattr(self, "_live_engine", None)
+            if eng is not None:
+                try:
+                    eng.bridge = self.bridge
+                except Exception:
+                    pass
             self.bridgeStateChanged.emit(self._bridge_on)
-            self.statusMessage.emit("мост запущен", "ok")
+            st = self.bridge.status()
+            if monitor_dev is not None and not st.get("monitor_ok"):
+                self.statusMessage.emit(
+                    "мост запущен, но наушники не открылись: "
+                    + (st.get("monitor_error") or "нет устройства"), "warn")
+            else:
+                self.statusMessage.emit("мост запущен", "ok")
         except Exception as exc:
             self.bridge = None
             self._bridge_on = False
@@ -1002,6 +1188,12 @@ class AppState(QObject):
             self.statusMessage.emit(f"мост не запустился: {exc}", "err")
 
     def _stop_bridge(self) -> None:
+        eng = getattr(self, "_live_engine", None)
+        if eng is not None:
+            try:
+                eng.bridge = None
+            except Exception:
+                pass
         if self.bridge is not None:
             try:
                 self.bridge.stop()
@@ -1034,6 +1226,22 @@ class AppState(QObject):
         self.devicesChanged.emit()
         return True, "маршрут выбран"
 
+    def _poll_ptt_release(self) -> None:
+        """Отпускание push-to-talk: WM_HOTKEY о нём не сообщает."""
+        if not self._ptt_active:
+            return
+        if not self._hotkeys_on:
+            self._ptt_active = False
+            return
+        try:
+            still = hk.combo_pressed(self._hotkey)
+        except Exception:
+            still = False
+        if not still:
+            self._ptt_active = False
+            with self._hk_lock:
+                self._hk_queue.append("live:ptt:up")
+
     def _poll(self) -> None:
         """Опрос очереди хоткеев (замена tk mainloop + after)."""
         with self._hk_lock:
@@ -1051,9 +1259,21 @@ class AppState(QObject):
 
     def _do_hotkey(self, action: str) -> None:
         eng = getattr(self, "_live_engine", None)
-        if action == "live:cont" and eng is not None:
-            eng.toggleContinuous()
-            self.statusMessage.emit("непрерывный режим переключён", "info")
+        if eng is None:
+            self.statusMessage.emit(f"хоткей: {action} (движок не подключён)",
+                                    "warn")
+            return
+        if action == "live:ptt:down":
+            if self._ptt_active:
+                return
+            self._ptt_active = True
+            eng.pressToTalk()
+            return
+        if action == "live:ptt:up":
+            # _poll_ptt_release уже сбросил флаг — отпускание всё равно
+            # должно дойти до движка.
+            self._ptt_active = False
+            eng.releaseToTalk()
             return
         self.statusMessage.emit(f"хоткей: {action}", "info")
 

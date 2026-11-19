@@ -261,7 +261,8 @@ class LiveTranslator:
             elif kind in ("catalog", "download", "verify", "model_removed",
                           "model_selected", "packs", "pack", "pack_verify",
                           "peer_lang", "peer_lang_detected", "unloaded",
-                          "mode", "peer_partial", "metrics", "stats"):
+                          "mode", "peer_partial", "metrics", "stats",
+                          "reference"):
                 # управление моделями и языковые пакеты
                 self.on_event(kind, msg)
             elif kind == "src_lang":
@@ -289,6 +290,14 @@ class LiveTranslator:
             return True
         except Exception:
             return False
+
+    def set_reference(self, path: str) -> bool:
+        """Сменить reference.wav активного профиля на лету."""
+        if not self.ready or not path:
+            return False
+        self.reference = path
+        self._send({"cmd": "reference", "path": str(path)})
+        return True
 
     def set_src_lang(self, code: str) -> bool:
         """Язык пользователя (источник исходящего перевода)."""

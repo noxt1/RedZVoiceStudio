@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import RedZ 1.0
 
 /// Модели и языки — по композиции референса «Models & Languages»:
@@ -75,6 +76,15 @@ Item {
         if (!mb || mb <= 0) return "—"
         if (mb >= 1024) return (mb / 1024).toFixed(1) + " ГБ"
         return Math.round(mb) + " МБ"
+    }
+
+    // Влезет ли модель в свободную VRAM вместе с запущенной игрой.
+    function fitText(m) {
+        if (!m.vram_mb || m.vram_mb <= 0) return "не занимает VRAM (CPU)"
+        if (appState.vramTotal <= 0) return "нужно VRAM " + page.sizeText(m.vram_mb)
+        var free = appState.vramTotal - appState.vramUsed
+        if (m.vram_mb <= free) return "влезает с игрой (свободно " + page.sizeText(free) + ")"
+        return "только без игры (свободно " + page.sizeText(free) + ")"
     }
 
     function packPill(status) {
@@ -194,7 +204,9 @@ Item {
                         font.weight: Theme.weightSemiBold
                     }
                     Text {
-                        text: "Модели распознавания, перевода и синтеза — установка, проверка, выбор"
+                        text: "Ставьте по свободной VRAM: в «Быстрых действиях» нажмите «Обновить каталог» — подтянутся все модели HuggingFace с размерами и требованиями"
+                        width: 620
+                        wrapMode: Text.WordWrap
                         color: Theme.textSecondary
                         font.family: Theme.fontFamilyText
                         font.pixelSize: 12
@@ -297,6 +309,17 @@ Item {
                 contentHeight: listColumn.height
                 contentY: 0
                 boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {
+                    width: 6
+                    policy: ScrollBar.AsNeeded
+                    background: Item { }
+                    contentItem: Rectangle {
+                        implicitWidth: 6
+                        radius: 3
+                        color: Theme.accent
+                        opacity: 0.45
+                    }
+                }
 
                 Column {
                     id: listColumn
@@ -428,6 +451,7 @@ Item {
                                               + "  ·  RAM " + page.sizeText(modelData.ram_mb)
                                               + (modelData.vram_mb > 0
                                                  ? "  ·  VRAM " + page.sizeText(modelData.vram_mb) : "")
+                                              + "  ·  " + page.fitText(modelData)
                                               + (modelData.direction
                                                  ? "  ·  " + page.directionText(modelData.direction) : "")
                                         color: Theme.textMuted
@@ -464,12 +488,19 @@ Item {
                                         controlHeight: 32
                                         flat: true
                                         visible: modelData.installed
-                                        text: modelData.type === "asr" && modelData.state !== "READY"
-                                              ? "Выбрать" : (modelData.type === "mt" ? "Выбрать" : "Проверить")
+                                        // «Выбрать» имеет смысл только для ru->X:
+                                        // обратные пары (es->ru) движок берёт сам
+                                        // для входящей речи, переключить на них нельзя.
+                                        readonly property bool selectable:
+                                            modelData.type === "asr" && modelData.state !== "READY"
+                                            || (modelData.type === "mt"
+                                                && String(modelData.direction || "").indexOf("ru->") === 0)
+                                        text: selectable ? "Выбрать" : "Проверить"
                                         iconSource: "icons/check.svg"
                                         onClicked: {
-                                            if (modelData.type === "mt") liveEngine.selectModel("mt", modelData.id)
-                                            else if (modelData.type === "asr" && modelData.state !== "READY")
+                                            if (selectable && modelData.type === "mt")
+                                                liveEngine.selectModel("mt", modelData.id)
+                                            else if (selectable)
                                                 liveEngine.selectModel("asr", modelData.id)
                                             else liveEngine.verifyModel(modelData.id)
                                         }
@@ -695,7 +726,7 @@ Item {
 
                 Card {
                     width: parent.width
-                    height: 190
+                    height: 224
                     padding: 16
 
                     Column {
@@ -742,18 +773,26 @@ Item {
                             flat: true
                             text: "Обновить каталог"
                             iconSource: "icons/refresh.svg"
-                            onClicked: {
-                                liveEngine.requestCatalog()
-                                liveEngine.requestPacks()
-                                liveEngine.requestModels()
-                            }
+                            onClicked: liveEngine.refreshCatalog()
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: liveEngine.catalogStatus !== ""
+                                  ? liveEngine.catalogStatus
+                                  : "Список моделей с HuggingFace: размер, RAM/VRAM и влезает ли с игрой"
+                            color: liveEngine.catalogStatus !== ""
+                                   ? Theme.accentBright : Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
 
                 Card {
                     width: parent.width
-                    height: parent.height - 382
+                    height: parent.height - 416
                     padding: 16
 
                     Column {
@@ -772,7 +811,8 @@ Item {
                             width: parent.width
                             text: appState.engineState === "READY" ? "Готов к работе"
                                  : (appState.engineState === "LOADING" ? "Загрузка моделей…"
-                                    : (appState.engineState === "ERROR" ? "Ошибка" : "Остановлен"))
+                                    : (appState.engineState === "ERROR" && liveEngine.error !== ""
+                                       ? "Ошибка" : "Остановлен"))
                             color: appState.engineState === "READY" ? Theme.success : Theme.textSecondary
                             font.family: Theme.fontFamilyText
                             font.pixelSize: 12

@@ -12,7 +12,10 @@ Tkinter не используется. Состояние — обычные а�
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import threading
 import time
 
 import numpy as np
@@ -33,6 +36,9 @@ class VoiceController(QObject):
     progressChanged = Signal()
     statusMessage = Signal(str, str)
     referenceChanged = Signal()
+    referenceBuildStarted = Signal(int)
+    referenceBuildFinished = Signal(bool, str)
+    referenceBuildStateChanged = Signal()
     samplesChanged = Signal()
     levelChanged = Signal(float)
     playingChanged = Signal()
@@ -49,6 +55,9 @@ class VoiceController(QObject):
         self._error = ""
         # отмеченные записи для сборки reference (пути wav)
         self._selected: set[str] = set()
+        self._building_ref = False
+        self._build_note = ""
+        self._dur_cache: dict[str, tuple[float, float]] = {}
         # что играет сейчас (путь) — для кнопки «стоп» в интерфейсе
         self._playing_path = ""
 
@@ -384,6 +393,19 @@ class VoiceController(QObject):
     def selectedCount(self) -> int:
         return len(self._selected)
 
+    @Property(bool, notify=referenceBuildStateChanged)
+    def referenceBusy(self) -> bool:
+        return self._building_ref
+
+    @Property(float, notify=levelChanged)
+    def level(self) -> float:
+        """Текущий уровень записи (0..1) для анимации микрофона."""
+        return float(getattr(self.recorder, "level", 0.0) or 0.0)
+
+    @Property(str, notify=referenceBuildStateChanged)
+    def referenceNote(self) -> str:
+        return self._build_note
+
     @Slot(str, result=bool)
     def saveProfile(self, name: str) -> bool:
         """Сохранить текущий reference как новый голосовой профиль.
@@ -414,24 +436,85 @@ class VoiceController(QObject):
             if not samples:
                 samples = [row["path"] for row in self._sample_rows()
                            if os.path.exists(row["path"])]
+            used = 0
             if samples:
                 res = core.build_reference(samples, target)
                 if not (isinstance(res, dict) and res.get("ok")):
                     self.statusMessage.emit("не удалось собрать профиль", "err")
                     return False
+                used = int(res.get("count") or len(samples))
+                self._copy_takes(name, samples)
             else:
                 ref = sp.output_paths()["reference"]
                 if not os.path.exists(ref):
                     self.statusMessage.emit("нет записей для профиля", "warn")
                     return False
-                import shutil
                 shutil.copy2(ref, target)
         except Exception as exc:
             self.statusMessage.emit(f"профиль не создался: {exc}", "err")
             return False
-        self.statusMessage.emit(f"профиль «{name}» создан", "ok")
+        # Одинаковые дубли дают побайтно одинаковый reference — на слух
+        # переключение профилей тогда ничего не меняет («клон не применяется»).
+        twin = self._same_reference(name, target)
+        if twin:
+            self.statusMessage.emit(
+                f"профиль «{name}» совпадает с «{twin}»: те же дубли", "warn")
+        elif used and not self._selected:
+            self.statusMessage.emit(
+                f"профиль «{name}» создан из всех {used} дублей", "ok")
+        else:
+            self.statusMessage.emit(f"профиль «{name}» создан", "ok")
+        # Движок должен подхватить новый reference сразу, даже если он уже
+        # загружен (иначе остаётся старый тембр из workspace/reference.wav).
+        self.referenceChanged.emit()
         self.samplesChanged.emit()
         return True
+
+    def _same_reference(self, name: str, target: str) -> str:
+        """Имя другого профиля с таким же reference.wav (или "")."""
+        try:
+            import hashlib
+
+            def digest(path: str) -> str:
+                h = hashlib.md5()
+                with open(path, "rb") as fh:
+                    for block in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(block)
+                return h.hexdigest()
+
+            mine = digest(target)
+            for other in sp.list_profiles():
+                if other == name:
+                    continue
+                path = sp.profile_reference(other)
+                if os.path.exists(path) and digest(path) == mine:
+                    return other
+        except Exception:
+            return ""
+        return ""
+
+    def _copy_takes(self, name: str, samples: list[str]) -> None:
+        """Сохранить исходные дубли внутри профиля (они не «исчезают»)."""
+        dest = os.path.join(sp.profile_dir(name), "takes")
+        os.makedirs(dest, exist_ok=True)
+        rows = []
+        for src in samples:
+            try:
+                base = os.path.basename(src)
+                out = os.path.join(dest, base)
+                if os.path.abspath(src) != os.path.abspath(out):
+                    shutil.copy2(src, out)
+                rows.append({"file": base, "source": src,
+                             "bytes": os.path.getsize(out)})
+            except Exception:
+                continue
+        try:
+            with open(os.path.join(dest, "takes.json"), "w",
+                      encoding="utf-8") as fh:
+                json.dump({"profile": name, "takes": rows}, fh,
+                          ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     @Slot(str)
     def deleteSample(self, path: str) -> None:
@@ -461,7 +544,15 @@ class VoiceController(QObject):
     # ==================================================================
     @Slot()
     def buildReference(self) -> None:
-        """Собрать reference из отмеченных записей (или из всех)."""
+        """Собрать reference из отмеченных записей (или из всех).
+
+        Раньше сборка шла в GUI-потоке: интерфейс дёргался, а результат
+        было не видно. Теперь работа уходит в фоновый поток, а в UI
+        приходят signals с прогрессом и итогом.
+        """
+        if self._building_ref:
+            self.statusMessage.emit("уже собираю образец", "warn")
+            return
         samples = [p for p in sorted(self._selected) if os.path.exists(p)]
         if not samples:
             samples = [row["path"] for row in self._sample_rows()
@@ -469,21 +560,37 @@ class VoiceController(QObject):
         if not samples:
             self.statusMessage.emit("нет записей — сначала запиши дубли", "warn")
             return
-        # Пишем в reference активного профиля — именно его берёт движок
-        # (studio_paths.active_reference), а не общий файл.
+        self._building_ref = True
+        self._build_note = f"собираю образец из {len(samples)} дублей…"
+        self.referenceBuildStateChanged.emit()
+        self.referenceBuildStarted.emit(len(samples))
+        self.statusMessage.emit(self._build_note, "info")
+        threading.Thread(target=self._build_reference_job,
+                         args=(samples,), daemon=True).start()
+
+    def _build_reference_job(self, samples: list[str]) -> None:
+        """Фоновая сборка reference активного профиля."""
+        import threading  # noqa: F401  (явная зависимость потока)
         out = sp.active_reference()
-        self.statusMessage.emit("собираю reference.wav…", "info")
+        ok = False
+        note = ""
         try:
             res = core.build_reference(samples, out)
-        except Exception as exc:
-            self.statusMessage.emit(f"ошибка: {exc}", "err")
-            return
-        if isinstance(res, dict) and res.get("ok"):
-            self.statusMessage.emit(
-                f"reference готов ({res.get('seconds', 0):.1f} c)", "ok")
-        else:
-            self.statusMessage.emit("не удалось собрать reference", "err")
-        self.referenceChanged.emit()
+            ok = bool(isinstance(res, dict) and res.get("ok"))
+            if ok:
+                secs = float(res.get("seconds", 0) or 0)
+                note = f"reference готов ({secs:.1f} c)"
+            else:
+                note = "не удалось собрать reference"
+        except Exception as exc:  # noqa: BLE001
+            note = f"ошибка сборки: {exc}"
+        self._building_ref = False
+        self._build_note = note
+        if ok:
+            self.referenceChanged.emit()
+        self.referenceBuildFinished.emit(ok, note)
+        self.referenceBuildStateChanged.emit()
+        self.statusMessage.emit(note, "ok" if ok else "err")
 
     # ==================================================================
     # МОДЕЛИ
@@ -512,6 +619,25 @@ class VoiceController(QObject):
             })
         return out
 
+    def _duration(self, path: str) -> float:
+        """Длительность WAV с кэшем: sf.info на 25 файлах при каждом
+        нажатии галочки тормозил GUI."""
+        try:
+            mt = os.path.getmtime(path)
+        except Exception:
+            mt = 0.0
+        hit = self._dur_cache.get(path)
+        if hit is not None and abs(hit[1] - mt) < 0.001:
+            return hit[0]
+        dur = 0.0
+        try:
+            import soundfile as sf
+            dur = float(sf.info(path).duration)
+        except Exception:
+            pass
+        self._dur_cache[path] = (dur, mt)
+        return dur
+
     def _sample_rows(self) -> list[dict]:
         """Все записи из voice_samples отдельными строками.
 
@@ -537,12 +663,7 @@ class VoiceController(QObject):
                            self._items[idx].get("ru") or fn)
             else:
                 text = fn
-            dur = 0.0
-            try:
-                import soundfile as sf
-                dur = float(sf.info(p).duration)
-            except Exception:
-                pass
+            dur = self._duration(p)
             out.append({
                 "index": idx,
                 "name": fn,
@@ -562,12 +683,7 @@ class VoiceController(QObject):
                 if not fn.lower().endswith(".wav"):
                     continue
                 p = os.path.join(d, fn)
-                dur = 0.0
-                try:
-                    import soundfile as sf
-                    dur = float(sf.info(p).duration)
-                except Exception:
-                    pass
+                dur = self._duration(p)
                 out.append({
                     "path": p,
                     "name": fn,

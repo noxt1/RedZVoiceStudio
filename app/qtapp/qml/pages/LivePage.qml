@@ -11,6 +11,20 @@ Item {
 
     property real micLevel: 0.0
     property real micPeak: 0.0
+    property real pressBoost: 0.0
+
+    PropertyAnimation {
+        id: pressAnim
+        target: page
+        property: "pressBoost"
+        to: 0.0
+        duration: 620
+        easing.type: Easing.OutCubic
+    }
+    function micPulse() {
+        page.pressBoost = 1.0
+        pressAnim.restart()
+    }
     property string activeControl: ""   // "live" | ""
 
     readonly property var inputLangItems: [
@@ -163,11 +177,27 @@ Item {
                         font.letterSpacing: 1.0
                         anchors.verticalCenter: parent.verticalCenter
                     }
-                    WaveformVisualizer {
-                        width: parent.width - 190
+                    // Та же живая волна, что на Главной: бежит вбок и
+                    // раздвигается по громкости, а не просто столбики.
+                    WaveBars {
+                        id: micWave
+                        // иконка (16) + подпись (~190) + проценты (46) + отступы
+                        width: Math.max(140, parent.width - 300)
                         height: 44
                         level: page.micLevel
-                        active: liveEngine.state === "READY"
+                        active: liveEngine.captureOn || liveEngine.busy
+                                || pttArea.pressed
+                        pressBoost: page.pressBoost
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                        text: Math.round(Math.min(1, page.micLevel) * 100) + "%"
+                        width: 46
+                        horizontalAlignment: Text.AlignRight
+                        color: page.micLevel > 0.05 ? Theme.accentCyan : Theme.textMuted
+                        font.family: Theme.fontFamilyMono
+                        font.pixelSize: Theme.fontTinyPx
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
@@ -227,6 +257,7 @@ Item {
                             id: pttArea
                             anchors.fill: parent
                             onPressed: {
+                                page.micPulse()
                                 page.activeControl = "live"
                                 liveEngine.pressToTalk()
                             }
@@ -326,13 +357,29 @@ Item {
                         }
                     }
 
-                    Text {
-                        text: "ПОСЛЕДНИЕ ПЕРЕВОДЫ"
-                        color: Theme.textMuted
-                        font.family: Theme.fontFamilyText
-                        font.pixelSize: Theme.fontTinyPx
-                        font.weight: Theme.weightBold
-                        font.letterSpacing: 1.0
+                    Item {
+                        width: parent.width
+                        height: 15
+
+                        Text {
+                            text: "ПОСЛЕДНИЕ ПЕРЕВОДЫ"
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: Theme.fontTinyPx
+                            font.weight: Theme.weightBold
+                            font.letterSpacing: 1.0
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            text: "свежие сверху · "
+                                  + historyModel.retentionDays() + " дн."
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 10
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                     }
 
                     ListView {
@@ -377,14 +424,17 @@ Item {
                 height: parent.height
                 spacing: 16
 
+                // «Уровень»: та же живая орба, что на Главной, плюс
+                // полоса-индикатор. Раньше здесь стоял вертикальный
+                // светофорный LevelMeter, который не влезал в карточку.
                 Card {
                     width: parent.width
-                    height: 130
+                    height: 176
                     padding: 16
 
                     Column {
                         anchors.fill: parent
-                        spacing: 8
+                        spacing: 10
 
                         Text {
                             text: "УРОВЕНЬ"
@@ -394,18 +444,68 @@ Item {
                             font.weight: Theme.weightBold
                             font.letterSpacing: 1.2
                         }
-                        LevelMeter {
-                            level: page.micLevel
-                            peak: page.micPeak
-                            label: "Микрофон"
+
+                        Row {
                             width: parent.width
+                            spacing: 14
+
+                            MicOrb {
+                                width: 96
+                                height: 96
+                                level: page.micLevel
+                                active: micWave.active
+                                pressBoost: page.pressBoost
+                            }
+
+                            Column {
+                                width: parent.width - 110
+                                spacing: 4
+
+                                Text {
+                                    text: "Микрофон"
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: Theme.fontTinyPx
+                                }
+                                Text {
+                                    text: Math.round(Math.min(1, page.micLevel) * 100) + "%"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamilyMono
+                                    font.pixelSize: 20
+                                    font.weight: Theme.weightSemiBold
+                                }
+                                Rectangle {
+                                    width: parent.width
+                                    height: 6
+                                    radius: 3
+                                    color: Theme.surface3
+
+                                    Rectangle {
+                                        width: Math.max(2, parent.width
+                                                          * Math.min(1, page.micLevel))
+                                        height: 6
+                                        radius: 3
+                                        gradient: Theme.gradAccent
+                                        Behavior on width {
+                                            NumberAnimation { duration: 90 }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: micWave.active ? "вижу звук" : "тишина"
+                                    color: micWave.active ? Theme.accentCyan
+                                                          : Theme.textMuted
+                                    font.family: Theme.fontFamilyText
+                                    font.pixelSize: Theme.fontTinyPx
+                                }
+                            }
                         }
                     }
                 }
 
                 Card {
                     width: parent.width
-                    height: parent.height - 130 - 16
+                    height: parent.height - 176 - 16
                     padding: 16
 
                     Column {
@@ -479,5 +579,8 @@ Item {
         target: liveEngine
         function onLevelChanged(v) { page.micLevel = v }
         function onPeerLevelChanged(v) { page.micPeak = v }
+        function onTranslationStarted() { page.micPulse() }
+        function onTranslationFinished() { page.micPulse() }
+        function onCaptureChanged(on) { if (on) page.micPulse() }
     }
 }

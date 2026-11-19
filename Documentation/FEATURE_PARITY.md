@@ -30,7 +30,7 @@
 | Push-to-Talk (зажать) | Главная → «Говорить (PTT)» | `pressToTalk/releaseToTalk` | runtime: микрофон открывается, 22 замера уровня, закрывается | PASS (логика) |
 | PTT при незагруженных моделях | Главная | `_start_hold` не требует READY | runtime: открывается только проверка микрофона, тост-предупреждение | PASS |
 | Непрерывный режим | Главная → тумблер | `setContinuous` + VAD по паузам | runtime: микрофон открыт, «непрерывный режим включён» | PASS (логика) |
-| Глобальный хоткей `Ctrl+Alt+L` | Настройки | `AppState.toggleHotkeys` → `hotkeys.GlobalHotkeys` | runtime: регистрация `['live:cont']`, снятие → пустой список | PASS |
+| Глобальный хоткей `Alt+CapsLock` (PTT) | Настройки | `AppState.toggleHotkeys` → `hotkeys.GlobalHotkeys` | runtime: `live:ptt:down` + опрос отпускания | PASS |
 | Выбор языка перевода | Главная / Настройки | `LiveEngine.setLang` → `{"cmd":"lang"}` | лог движка: `команда: lang` → `event lang es` | PASS |
 | Язык собеседника (`auto`) | Главная | `setPeerLang` → `{"cmd":"peer_lang"}` | лог: `язык чужой речи: auto` | PASS |
 | Живость интонации 0–3 | Голос | `setLiveliness` → `{"cmd":"liveliness"}` | лог: `живость: 2` | PASS |

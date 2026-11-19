@@ -41,6 +41,7 @@ class MtBeamPolicy(unittest.TestCase):
         eng._mt_for = lambda code: [("tok", "model")]
         eng.translate_text("Привет, друг")
         self.assertEqual(self.calls, [1])
+        self.assertLess(lt.MT_BEAMS_FORWARD, 2)
 
     def test_empty_and_same_language_untouched(self):
         eng = self._engine()

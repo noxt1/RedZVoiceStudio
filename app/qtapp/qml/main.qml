@@ -11,8 +11,9 @@ Window {
 
     width: 1600
     height: 960
-    minimumWidth: 1280
-    minimumHeight: 840
+    // окно можно и развернуть, и сузить: раскладка адаптивная
+    minimumWidth: 1120
+    minimumHeight: 720
     visible: true
     color: Theme.bg
     title: brandName
@@ -45,7 +46,8 @@ Window {
     // ==================================================================
     Rectangle {
         id: sidebar
-        width: 236
+        // сайдбар сжимается вместе с окном (200…236 px)
+        width: Math.max(200, Math.min(236, Math.round(window.width * 0.155)))
         anchors.top: parent.top
         anchors.bottom: statusbar.top
         anchors.left: parent.left
@@ -290,7 +292,8 @@ Window {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: statusbar.top
-        anchors.margins: 18
+        // поля страницы тоже адаптивные: на большом экране воздуха больше
+        anchors.margins: Math.round(Math.min(22, Math.max(12, window.width * 0.012)))
         asynchronous: false
 
         source: {
@@ -326,9 +329,13 @@ Window {
     }
 
     Connections {
+        target: voiceController
+        function onStatusMessage(text, kind) { toast.show(text, kind) }
+    }
+
+    Connections {
         target: liveEngine
-        function onErrorMessage(msg) { toast.show(msg, "err") }
-        // Служебные строки движка (torch/warnings с путями) пишутся в лог,
+        function onErrorMessage(msg) { toast.show(msg, "err") }        // Служебные строки движка (torch/warnings с путями) пишутся в лог,
         // а не всплывают поверх интерфейса — раньше они закрывали страницу.
         function onLogLine(line) { console.debug(line) }
     }

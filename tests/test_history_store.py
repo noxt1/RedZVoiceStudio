@@ -39,20 +39,24 @@ class HistoryStoreTest(unittest.TestCase):
 
         again = models.HistoryModel(path=self.path)
         self.assertEqual(again.count(), 2)
+        # свежий перевод — сверху
         self.assertEqual(again.data(again.index(0), models.HistoryModel.RuRole),
-                         "Привет")
-        self.assertEqual(again.data(again.index(1), models.HistoryModel.DirRole),
+                         "О нет")
+        self.assertEqual(again.data(again.index(0), models.HistoryModel.DirRole),
                          "in")
+        self.assertEqual(again.data(again.index(1), models.HistoryModel.RuRole),
+                         "Привет")
 
     def test_remove_and_clear_rewrite_file(self) -> None:
         m = models.HistoryModel(path=self.path)
         m.add("out", "a", "a")
         m.add("out", "b", "b")
-        m.removeAt(0)
+        self.assertEqual(m.data(m.index(0), models.HistoryModel.RuRole), "b")
+        m.removeAt(0)  # удаляем самую свежую
         again = models.HistoryModel(path=self.path)
         self.assertEqual(again.count(), 1)
         self.assertEqual(again.data(again.index(0), models.HistoryModel.RuRole),
-                         "b")
+                         "a")
 
         again.clear()
         self.assertEqual(models.HistoryModel(path=self.path).count(), 0)
@@ -69,6 +73,19 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(m.count(), 1)
         self.assertEqual(m.data(m.index(0), models.HistoryModel.RuRole),
                          "новое")
+
+    def test_pruned_entries_are_removed_from_file(self) -> None:
+        old = time.time() - (models.HISTORY_RETENTION_DAYS + 1) * 86400
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": old, "dir": "out", "ru": "старое",
+                                 "es": "viejo"}, ensure_ascii=False) + "\n")
+            fh.write(json.dumps({"ts": time.time(), "dir": "in", "ru": "новое",
+                                 "es": "nuevo"}, ensure_ascii=False) + "\n")
+        models.HistoryModel(path=self.path)
+        with open(self.path, encoding="utf-8") as fh:
+            lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["ru"], "новое")
 
     def test_broken_lines_are_skipped(self) -> None:
         with open(self.path, "w", encoding="utf-8") as fh:
@@ -89,7 +106,7 @@ class HistoryStoreTest(unittest.TestCase):
         with open(jpath, encoding="utf-8") as fh:
             data = json.load(fh)
         self.assertEqual(len(data), 2)
-        self.assertEqual(data[0]["ru"], "Привет")
+        self.assertEqual(data[0]["ru"], "О нет")
         with open(tpath, encoding="utf-8") as fh:
             text = fh.read()
         self.assertIn("RU -> ES", text)

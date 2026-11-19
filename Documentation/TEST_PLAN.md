@@ -12,7 +12,7 @@
 | Проверка | Команда | Результат |
 |---|---|---|
 | Компиляция Python | `python -m compileall -q app` | PASS (без ошибок) |
-| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 148 тестов (вкл. 3 в `test_mt_quality.py`, 5 в `test_mt_cache_glossary.py`, 6 в `test_history_store.py`) |
+| Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 152 теста (вкл. 3 в `test_mt_quality.py`, 4 в `test_bridge_monitor.py`) |
 | QML-линт | `pyside6-qmllint -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/RedZ/*.qml` | PASS — 0 ошибок (только Info/Warning) |
 | Аудит API QML→Python | обход всех `appState.*`, `liveEngine.*`, `voiceController.*`, `*Model.*` в QML и `hasattr` на живых объектах | PASS — 74 обращения, 0 отсутствующих |
 | Аудит сигналов | AST: сравнение арности `Signal(...)` и `.emit(...)` | PASS — 0 расхождений (было 2, исправлено) |
@@ -65,7 +65,7 @@
 | Речь живым голосом | — | BLOCKED — микрофон в сессии давал ~0.002 RMS |
 | Звук перевода в колонки | — | UNVERIFIED — проверка шла с громкостью 0 |
 | Мост VB-CABLE | — | UNVERIFIED — кабель установлен, включение не прогонялось |
-| Хоткей `Ctrl+Alt+L` | `toggleHotkeys()` | PASS — регистрация `live:cont`, снятие чистое |
+| Хоткей `Alt+CapsLock` (удерживать) | `toggleHotkeys()` | PASS — `live:ptt:down`, отпускание по `GetAsyncKeyState` |
 | Входящий канал (loopback) | `reference.wav` → `_on_loopback_pcm`, 48 кГц блоками | PASS — 7 отправок, `peer_text` «ru / Уже хочу есть.» |
 | Входящая озвучка | `incoming_speak` → `incoming_chunk` | PASS — чанки получены, отдельный поток наушников открыт |
 | Петля на живом прогоне | подача звука во время озвучки | PASS — счётчик отправок не изменился, `speaking=True` |

@@ -1,13 +1,19 @@
 import QtQuick
 import RedZ 1.0
 
-/// Волновая дорожка из референсов: полосы разной высоты, «дышат» от уровня.
+/// Волновая дорожка: бегущая неоновая волна на всю ширину карточки.
+///
+/// Раньше это были отдельные столбики с лёгкой пульсацией. Теперь это
+/// непрерывная волна на Canvas: она «бежит» вбок, раздвигается по высоте
+/// от реального уровня микрофона и мягко дышит в тишине. Рисунок живёт
+/// строго внутри своей области, поэтому соседние элементы не задевает.
 Item {
     id: root
 
-    property real level: 0.0        // 0..1
+    property real level: 0.0        // 0..1 — реальный уровень микрофона
     property bool active: false
-    property int bars: 56
+    property real pressBoost: 0.0   // короткий импульс от нажатия кнопки
+    property int bars: 56           // оставлено для совместимости
     property color colorFrom: Theme.accent
     property color colorTo: Theme.accentCyan
     property real maxHeight: height
@@ -15,47 +21,120 @@ Item {
     implicitWidth: 420
     implicitHeight: 56
 
-    // фаза «дыхания»: волна чуть шевелится даже в тишине
-    property real phase: 0.0
-
-    Timer {
-        interval: 70
-        repeat: true
-        running: true
-        onTriggered: root.phase += 0.18
+    // сглаженный уровень и бегущая фаза
+    property real smoothLevel: root.level
+    Behavior on smoothLevel {
+        NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
     }
 
-    // фиксированный «рисунок» волны: без Math.random, чтобы не дёргалось
-    readonly property var pattern: [
-        0.18, 0.34, 0.52, 0.78, 1.00, 0.72, 0.44, 0.62, 0.90, 0.66,
-        0.38, 0.56, 0.84, 1.00, 0.70, 0.46, 0.30, 0.50, 0.74, 0.94,
-        0.68, 0.42, 0.26, 0.44, 0.66, 0.86, 0.58, 0.36, 0.52, 0.76,
-        0.96, 0.64, 0.40, 0.28, 0.48, 0.70, 0.88, 0.60, 0.38, 0.54,
-        0.80, 0.98, 0.66, 0.42, 0.30, 0.52, 0.74, 0.56, 0.34, 0.22,
-        0.40, 0.62, 0.82, 0.58, 0.36, 0.24
-    ]
+    readonly property real energy: {
+        var e = Math.min(1.0, root.smoothLevel + root.pressBoost * 0.5)
+        return root.active ? Math.max(0.08, e) : Math.max(0.0, e * 0.6)
+    }
 
-    Row {
-        anchors.centerIn: parent
-        spacing: Math.max(1, Math.round(width / root.bars * 0.45))
+    property real phase: 0.0
+    Timer {
+        interval: 33
+        repeat: true
+        running: true
+        onTriggered: root.phase += 0.055
+    }
 
-        Repeater {
-            model: root.bars
-            delegate: Rectangle {
-                readonly property real base: root.pattern[index % root.pattern.length]
-                width: Math.max(2, Math.round(parent.parent.width / root.bars * 0.55))
-                height: {
-                    var amp = root.active ? (0.45 + root.level * 0.55) : 0.52
-                    var breathe = root.active ? 0.0
-                                             : 0.07 * Math.sin(root.phase + index * 0.45)
-                    return Math.max(3, root.height * base * (amp + breathe))
-                }
-                radius: width / 2
-                anchors.verticalCenter: parent.verticalCenter
-                color: index < root.bars / 2 ? root.colorFrom : root.colorTo
-                opacity: root.active ? 0.95 : 0.65
-                Behavior on height { NumberAnimation { duration: 90 } }
-            }
+    Canvas {
+        id: wave
+        anchors.fill: parent
+        onPaint: root.paintWave(wave)
+        onWidthChanged: wave.requestPaint()
+        onHeightChanged: wave.requestPaint()
+
+        Connections {
+            target: root
+            function onEnergyChanged() { wave.requestPaint() }
+            function onPhaseChanged() { wave.requestPaint() }
         }
+    }
+
+    // тонкая осевая линия — чтобы волна читалась и в полной тишине
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: 1
+        color: Theme.border
+        opacity: 0.45
+    }
+
+    function paintWave(canvas) {
+        var ctx = canvas.getContext("2d")
+        if (!ctx)
+            return
+        var w = canvas.width
+        var h = canvas.height
+        if (w <= 4 || h <= 4)
+            return
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.clearRect(0, 0, w, h)
+
+        var mid = h / 2
+        var e = root.energy
+        // амплитуда: в тишине еле заметная, на пике — почти на всю высоту
+        var amp = (h * 0.42) * (0.16 + Math.min(1.0, e) * 0.9)
+
+        function sampleAmp(t) {
+            return Math.sin(t * 12.0 + root.phase * 3.4) * 0.58
+                 + Math.sin(t * 23.0 - root.phase * 2.1) * 0.26
+                 + Math.sin(t * 5.0 + root.phase * 0.9) * 0.16
+        }
+        function envelope(t) {
+            // к краям волна стихает — дорожка выглядит аккуратной
+            return 0.30 + 0.70 * Math.sin(Math.PI * t)
+        }
+
+        var grad = ctx.createLinearGradient(0, 0, w, 0)
+        grad.addColorStop(0.0, "#8B5CF6")
+        grad.addColorStop(0.5, "#3B82F6")
+        grad.addColorStop(1.0, "#22D3EE")
+
+        // тело волны: зеркально сверху и снизу от оси
+        var step = 3
+        ctx.beginPath()
+        ctx.moveTo(0, mid)
+        for (var x = 0; x <= w; x += step) {
+            var t = x / Math.max(1, w)
+            var y = mid - Math.abs(sampleAmp(t)) * envelope(t) * amp
+            ctx.lineTo(x, y)
+        }
+        for (var x2 = w; x2 >= 0; x2 -= step) {
+            var t2 = x2 / Math.max(1, w)
+            var y2 = mid + Math.abs(sampleAmp(t2)) * envelope(t2) * amp
+            ctx.lineTo(x2, y2)
+        }
+        ctx.closePath()
+        ctx.globalAlpha = 0.22 + Math.min(1.0, e) * 0.18
+        ctx.fillStyle = grad
+        ctx.fill()
+
+        // неоновый контур: широкий полупрозрачный + тонкий яркий
+        ctx.beginPath()
+        for (var x3 = 0; x3 <= w; x3 += step) {
+            var t3 = x3 / Math.max(1, w)
+            var y3 = mid - Math.abs(sampleAmp(t3)) * envelope(t3) * amp
+            if (x3 === 0)
+                ctx.moveTo(x3, y3)
+            else
+                ctx.lineTo(x3, y3)
+        }
+        ctx.globalAlpha = 0.22 + Math.min(1.0, e) * 0.18
+        ctx.strokeStyle = "#22D3EE"
+        ctx.lineWidth = 6
+        ctx.stroke()
+
+        ctx.globalAlpha = 0.92
+        ctx.strokeStyle = grad
+        ctx.lineWidth = 2.2
+        ctx.stroke()
+
+        ctx.globalAlpha = 1.0
     }
 }

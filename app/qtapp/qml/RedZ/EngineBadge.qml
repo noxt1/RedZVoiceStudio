@@ -48,7 +48,8 @@ Item {
                 Text {
                     text: root.ready ? "Движок: готов"
                          : (appState.engineState === "LOADING" ? "Загрузка моделей…"
-                            : (appState.engineState === "ERROR" ? "Ошибка" : "Остановлен"))
+                            : (appState.engineState === "ERROR" && liveEngine.error !== ""
+                               ? "Ошибка" : "Остановлен"))
                     color: Theme.textPrimary
                     font.family: Theme.fontFamilyText
                     font.pixelSize: 12

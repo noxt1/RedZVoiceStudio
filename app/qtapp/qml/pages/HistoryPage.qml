@@ -259,7 +259,9 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: "Сохраняется между запусками, хранится 30 дней."
+                            text: "Новые переводы сверху. Хранится "
+                                  + historyModel.retentionDays()
+                                  + " дня, затем записи удаляются автоматически."
                             wrapMode: Text.WordWrap
                             color: Theme.textMuted
                             font.family: Theme.fontFamilyText

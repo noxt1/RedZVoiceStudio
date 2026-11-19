@@ -269,8 +269,9 @@ class SampleModel(QAbstractListModel):
 # Модель истории переводов
 # ======================================================================
 # История переживает перезапуск (ROADMAP 8.3–8.4): простой jsonl в рабочей
-# папке. Старше HISTORY_RETENTION_DAYS при загрузке отбрасываем.
-HISTORY_RETENTION_DAYS = 30
+# папке. Старше HISTORY_RETENTION_DAYS отбрасываем при загрузке и сразу же
+# переписываем файл — логи не растут бесконечно.
+HISTORY_RETENTION_DAYS = 3
 
 
 def history_path() -> str:
@@ -278,7 +279,7 @@ def history_path() -> str:
 
 
 class HistoryModel(QAbstractListModel):
-    """История переводов: сессия + сохранённые записи за 30 дней."""
+    """История переводов за последние 3 дня, новые записи — сверху."""
 
     RuRole = Qt.UserRole + 1
     EsRole = Qt.UserRole + 2
@@ -318,10 +319,15 @@ class HistoryModel(QAbstractListModel):
 
     # ---------- хранение ----------
     def _load(self) -> None:
-        """Прочитать историю с диска и отбросить устаревшее."""
+        """Прочитать историю с диска и отбросить устаревшее.
+
+        В памяти записи идут от свежих к старым, поэтому в списках свежая
+        реплика оказывается сверху, а старые — ниже.
+        """
         import json
         cutoff = time.time() - HISTORY_RETENTION_DAYS * 86400
         rows: list[dict] = []
+        dropped = False
         try:
             with open(self._path, encoding="utf-8") as fh:
                 for line in fh:
@@ -336,6 +342,7 @@ class HistoryModel(QAbstractListModel):
                         continue
                     ts = float(it.get("ts") or 0)
                     if ts and ts < cutoff:
+                        dropped = True
                         continue
                     rows.append({
                         "ru": it["ru"],
@@ -349,10 +356,16 @@ class HistoryModel(QAbstractListModel):
             return
         except Exception:  # noqa: BLE001
             return
-        if rows:
-            self.beginResetModel()
-            self._items = rows[-500:]
-            self.endResetModel()
+        if len(rows) > 500:
+            rows = rows[-500:]
+            dropped = True
+        rows.reverse()
+        self.beginResetModel()
+        self._items = rows
+        self.endResetModel()
+        if dropped:
+            # чистка на диске: просроченные строки в файле больше не нужны
+            self._rewrite_file()
 
     def _append_file(self, item: dict) -> None:
         import json
@@ -370,8 +383,9 @@ class HistoryModel(QAbstractListModel):
         import json
         try:
             os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
+            # в памяти «свежие сверху», а в файле держим хронологию
             with open(self._path, "w", encoding="utf-8") as fh:
-                for it in self._items:
+                for it in reversed(self._items):
                     fh.write(json.dumps({
                         "ts": it["ts"], "dir": it["dir"],
                         "ru": it["ru"], "es": it["es"],
@@ -391,9 +405,9 @@ class HistoryModel(QAbstractListModel):
             "ts": ts,
             "time": time.strftime("%H:%M:%S", time.localtime(ts)),
         }
-        row = len(self._items)
-        self.beginInsertRows(QModelIndex(), row, row)
-        self._items.append(item)
+        # новый перевод — первой строкой: актуальное всегда сверху
+        self.beginInsertRows(QModelIndex(), 0, 0)
+        self._items.insert(0, item)
         self.endInsertRows()
         self._append_file(item)
 
@@ -416,6 +430,11 @@ class HistoryModel(QAbstractListModel):
     @Slot(result=int)
     def count(self) -> int:
         return len(self._items)
+
+    @Slot(result=int)
+    def retentionDays(self) -> int:
+        """Сколько дней храним историю (для подсказки в интерфейсе)."""
+        return HISTORY_RETENTION_DAYS
 
     # ---------- экспорт (ROADMAP 8.8) ----------
     def _export_path(self, ext: str) -> str:

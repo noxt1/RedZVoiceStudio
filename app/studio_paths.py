@@ -1,4 +1,4 @@
-"""Пути, рабочая папка и поиск движка для RedZ Voice Studio.
+"""Пути, рабочая папка и поиск движка для Auraloom.
 
 Приложение работает и как EXE, и из исходников. Всё состояние лежит в
 %LOCALAPPDATA%\\RedZVoiceStudio\\workspace, чтобы не зависеть от того,
@@ -199,6 +199,31 @@ def seed_workspace() -> None:
             if os.path.exists(src_f):
                 _safe_copy(src_f, os.path.join(voices_dir, fname))
 
+    # Готовые звуковые подсказки (образцы интонации) — уже записанные
+    # WAV из voices/prompts. Копируются в рабочую папку, чтобы их
+    # можно было слушать и из EXE, и из исходников.
+    prompts_src = os.path.join(src, "voices", "prompts")
+    prompts_dst = os.path.join(voices_dir, "prompts")
+    if os.path.isdir(prompts_src):
+        os.makedirs(prompts_dst, exist_ok=True)
+        for fname in os.listdir(prompts_src):
+            s = os.path.join(prompts_src, fname)
+            if not os.path.isfile(s):
+                continue
+            d = os.path.join(prompts_dst, fname)
+            if (not os.path.exists(d)
+                    or os.path.getsize(s) != os.path.getsize(d)):
+                _safe_copy(s, d)
+    else:
+        # В бандле PyInstaller путь может быть voices/prompts сразу в корне
+        alt = os.path.join(src, "prompts")
+        if os.path.isdir(alt):
+            os.makedirs(prompts_dst, exist_ok=True)
+            for fname in os.listdir(alt):
+                s = os.path.join(alt, fname)
+                if os.path.isfile(s):
+                    _safe_copy(s, os.path.join(prompts_dst, fname))
+
 
 def tool_path(name: str) -> str:
     """Путь к CLI-инструменту: рядом с EXE (tools/) или в исходниках."""
@@ -287,4 +312,107 @@ def output_paths() -> dict[str, str]:
         "samples": os.path.join(ws, "voice_samples"),
         "reference": os.path.join(ws, "reference.wav"),
         "lines": os.path.join(ws, "lines.json"),
+        # профили клонированного голоса
+        "profiles": os.path.join(ws, "voice_profiles"),
     }
+
+
+# --------------------------------------------------------------------------
+# Профили голоса (несколько клонов одного голоса)
+# --------------------------------------------------------------------------
+def profiles_dir() -> str:
+    """Папка профилей: workspace/voice_profiles."""
+    d = os.path.join(workspace(), "voice_profiles")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def profile_dir(name: str) -> str:
+    """Папка конкретного профиля."""
+    return os.path.join(profiles_dir(), _safe_name(name))
+
+
+def profile_reference(name: str) -> str:
+    """reference.wav конкретного профиля."""
+    return os.path.join(profile_dir(name), "reference.wav")
+
+
+def _safe_name(name: str) -> str:
+    """Имя профиля -> безопасное имя папки."""
+    keep = []
+    for ch in (name or "").strip():
+        if ch.isalnum() or ch in " _-":
+            keep.append(ch)
+        elif ch in "ёйцукенгшщзхъфывапролджэячсмитьбю":
+            keep.append(ch)
+    out = "".join(keep).strip().replace(" ", "_")
+    return out or "profile"
+
+
+def list_profiles() -> list[str]:
+    """Список профилей.
+
+    Показываем и пустые (только что созданные) — иначе созданный профиль
+    не появляется в комбобоксе, пока в нём нет reference.wav.
+    """
+    d = profiles_dir()
+    out: list[str] = []
+    try:
+        for entry in sorted(os.listdir(d)):
+            p = os.path.join(d, entry)
+            if os.path.isdir(p):
+                out.append(entry)
+    except Exception:
+        pass
+    return out
+
+
+def create_profile(name: str) -> tuple[str, str]:
+    """Создать профиль. Возвращает (путь_к_reference, сообщение)."""
+    d = profile_dir(name)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception as exc:
+        return "", f"не удалось создать профиль: {exc}"
+    ref = os.path.join(d, "reference.wav")
+    if os.path.exists(ref):
+        return ref, f"профиль «{name}» уже существует"
+    return ref, f"профиль «{name}» создан"
+
+
+def active_profile_file() -> str:
+    """Файл с именем активного профиля."""
+    return os.path.join(workspace(), "active_profile.txt")
+
+
+def get_active_profile() -> str:
+    """Имя активного профиля (пустая строка — используется общий reference.wav)."""
+    try:
+        with open(active_profile_file(), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except Exception:
+        return ""
+
+
+def set_active_profile(name: str) -> None:
+    """Запомнить активный профиль."""
+    try:
+        with open(active_profile_file(), "w", encoding="utf-8") as fh:
+            fh.write((name or "").strip())
+    except Exception:
+        pass
+
+
+def active_reference() -> str:
+    """Путь к reference активного профиля.
+
+    Если профиль выбран — возвращаем его reference.wav (даже если файла
+    ещё нет: сборка создаст его там). Иначе — общий reference.wav.
+    """
+    name = get_active_profile()
+    if name:
+        return profile_reference(name)
+    return output_paths()["reference"]

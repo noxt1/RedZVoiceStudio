@@ -151,12 +151,30 @@ MT_CACHE_CHAINS = max(1, int(os.environ.get("REDZ_MT_CACHE_CHAINS", "2")))
 # +150 мс — там это не критично. Для прямого (RU -> ES) greedy лучше
 # (41,6 против 37,8), поэтому beam включается только для обратного.
 MT_BEAMS_REVERSE = max(1, int(os.environ.get("REDZ_MT_BEAMS_REVERSE", "4")))
+# Исходящий перевод: по замеру greedy точнее (chrF 41,6 против 37,8
+# у beam=4) и втрое быстрее. Стабильность фразы обеспечивается кэшем и
+# самим ASR; увеличение beam калечит качество — не трогаем.
+MT_BEAMS_FORWARD = max(1, int(os.environ.get("REDZ_MT_BEAMS_FORWARD", "1")))
 
 
 def _hf_hub_dir() -> str:
     """Каталог кэша HuggingFace (оттуда движок берёт модели)."""
     return os.environ.get("HF_HUB_CACHE") or os.path.expanduser(
         os.path.join("~", ".cache", "huggingface", "hub"))
+
+
+def _ref_sig(path: str) -> tuple:
+    """Подпись reference: путь + mtime + размер.
+
+    Без mtime повторная сборка reference по тому же пути считалась
+    «уже загруженной», и клонированный голос не менялся.
+    """
+    try:
+        st = os.stat(path)
+        return (os.path.normcase(os.path.abspath(path)),
+                getattr(st, "st_mtime_ns", 0), st.st_size)
+    except Exception:
+        return ("", 0, 0)
 
 
 def _model_installed(name) -> bool:
@@ -410,6 +428,7 @@ class Engine:
         # Управление моделями (Model Manager).
         self.loaded = False
         self.reference = ""
+        self._reference_sig: tuple = ("", 0, 0)
         self._cancel_requests: set[str] = set()
         self._download_ids: set[str] = set()
         self._chain_repos: dict[str, list[str]] = {}
@@ -1250,6 +1269,7 @@ class Engine:
         # кэш голоса: считается один раз (1.4 с), дальше 0.03 с
         self.gpt_latent, self.spk_emb = self.tts.get_conditioning_latents(
             audio_path=[reference])
+        self._reference_sig = _ref_sig(reference)
         log(f"[engine] XTTS + кэш голоса за {(time.time() - t0) * 1000:.0f} мс, "
             f"RSS={_rss_mb():.0f} МБ")
         self._warmup_tts()
@@ -1275,6 +1295,36 @@ class Engine:
             log(f"[engine] XTTS прогрет за {(time.time() - t0) * 1000:.0f} мс")
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] прогрев XTTS не удался: {type(exc).__name__}: {exc}")
+
+    def set_reference(self, reference: str) -> bool:
+        """Сменить тембр голоса без перезагрузки ASR/MT/XTTS."""
+        reference = (reference or "").strip()
+        if not reference or not os.path.exists(reference):
+            log(f"[engine] reference не найден: {reference}")
+            return False
+        if self.tts is None:
+            self.reference = reference
+            self._reference_sig = _ref_sig(reference)
+            return True
+        sig = _ref_sig(reference)
+        if sig == getattr(self, "_reference_sig", ("", 0, 0)) \
+                and self.spk_emb is not None and sig[0]:
+            return True
+        t0 = time.time()
+        try:
+            with self.lock:
+                gpt, spk = self.tts.get_conditioning_latents(
+                    audio_path=[reference])
+                self.gpt_latent, self.spk_emb = gpt, spk
+                self.reference = reference
+                self._reference_sig = sig
+            log(f"[engine] голос пересобран за {(time.time() - t0) * 1000:.0f} мс: "
+                f"{reference}")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log(f"[engine] не удалось переключить голос: "
+                f"{type(exc).__name__}: {exc}")
+            return False
 
     # ---------- перевод текста ----------
     def _ensure_state(self) -> None:
@@ -1349,7 +1399,8 @@ class Engine:
         for item in chain:
             tok, model = item[0], item[1]
             target = item[2] if len(item) > 2 else None
-            batch = tok([text], return_tensors="pt", padding=True).to(MT_DEVICE)
+            batch = tok([text], return_tensors="pt", padding=True).to(
+                getattr(model, "device", MT_DEVICE))
             gen_kwargs = {}
             if target:
                 try:
@@ -1378,7 +1429,7 @@ class Engine:
         if hit is not None:
             return hit
         chain = self._mt_for(self.lang)
-        text = self._run_chain(ru, chain, dst=self.lang)
+        text = self._run_chain(ru, chain, beam=MT_BEAMS_FORWARD, dst=self.lang)
         # Олдвест: это английский, переписанный словами ковбойской речи.
         # Лишней модели и задержки это не добавляет.
         if self.lang == "ow" and voice_lang is not None:
@@ -2102,6 +2153,21 @@ def main() -> None:
     log(f"[engine] старт: reference={reference}")
     emit({"event": "boot"})
 
+    def refresh_catalog_job() -> None:
+        """Обновить каталог HuggingFace в фоне (сеть, без блокировки IPC)."""
+        try:
+            import model_discovery
+            res = model_discovery.refresh(user_lang=engine.src_lang or "ru")
+        except Exception as exc:  # noqa: BLE001
+            res = {"ok": False, "found": 0,
+                   "error": f"{type(exc).__name__}: {exc}"}
+        emit({"event": "catalog_refreshed", **res})
+        try:
+            emit({"event": "catalog", "models": engine.catalog(),
+                  "loaded": engine.loaded})
+        except Exception as exc:  # noqa: BLE001
+            log(f"[engine] каталог после обновления не собран: {exc}")
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -2120,6 +2186,10 @@ def main() -> None:
                 engine.load(reference)
                 emit({"event": "ready", "load_ms": int((time.time() - t0) * 1000),
                       "asr_ms": engine.load_ms})
+            elif cmd == "reference":
+                ok = engine.set_reference(msg.get("path", ""))
+                emit({"event": "reference", "ok": bool(ok),
+                      "path": msg.get("path", "")})
             elif cmd == "speak":
                 engine.speak(msg.get("text", ""), msg.get("seq", 0),
                              lang=msg.get("lang"))
@@ -2149,6 +2219,10 @@ def main() -> None:
                 # каталог моделей с состоянием установки/загрузки
                 emit({"event": "catalog", "models": engine.catalog(),
                       "loaded": engine.loaded})
+            elif cmd == "refresh_catalog":
+                # обновляемый список с HuggingFace (размеры, железо)
+                threading.Thread(target=refresh_catalog_job,
+                                 daemon=True).start()
             elif cmd == "model_download":
                 repos = [r for r in (msg.get("models")
                                      or [msg.get("id", "")]) if r]
