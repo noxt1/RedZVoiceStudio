@@ -251,7 +251,14 @@ def _same_content(a: str, b: str) -> bool:
 
 
 def workspace_tools() -> str:
-    """Папка, куда копировать CLI-инструменты для вызова из EXE."""
+    """Папка, куда копировать CLI-инструменты для вызова из EXE.
+
+    Кроме копирования новых/изменённых файлов удаляет осиротевшие копии:
+    скрипты, которых больше нет в источнике (например, после переноса
+    одноразовых скриптов в tools/archive). Иначе в рабочей папке остаются
+    копии удалённой функциональности, и приложение может вызвать старый
+    скрипт вместо отсутствующего.
+    """
     ws = workspace()
     dst = os.path.join(ws, "tools")
     os.makedirs(dst, exist_ok=True)
@@ -263,8 +270,10 @@ def workspace_tools() -> str:
             _log_tools_update(src_tools + " (НЕТ ПАПКИ)", -1)
             continue
         copied = 0
+        src_names: set[str] = set()
         for fname in os.listdir(src_tools):
             if fname.endswith((".py", ".ps1")):
+                src_names.add(fname)
                 source = os.path.join(src_tools, fname)
                 target = os.path.join(dst, fname)
                 # Копируем, если файла нет ИЛИ содержимое отличается.
@@ -280,13 +289,28 @@ def workspace_tools() -> str:
                 # и на нём падает (PermissionError)
                 if _safe_copy(source, target):
                     copied += 1
-        _log_tools_update(src_tools, copied)
+        # Осиротевшие копии: файл есть в рабочей папке, но его больше нет
+        # в источнике. Удаляем только файлы .py/.ps1 (не папки и не данные),
+        # сбой удаления не должен ломать запуск.
+        removed = 0
+        for fname in os.listdir(dst):
+            if not fname.endswith((".py", ".ps1")) or fname in src_names:
+                continue
+            target = os.path.join(dst, fname)
+            if not os.path.isfile(target):
+                continue
+            try:
+                os.remove(target)
+                removed += 1
+            except OSError:
+                pass
+        _log_tools_update(src_tools, copied, removed)
         break
     return dst
 
 
-def _log_tools_update(src_tools: str, copied: int) -> None:
-    """Записать в журнал, откуда и сколько инструментов обновлено."""
+def _log_tools_update(src_tools: str, copied: int, removed: int = 0) -> None:
+    """Записать в журнал, откуда и сколько инструментов обновлено/убрано."""
     try:
         logs = os.path.join(local_app_data(), "workspace", "logs")
         os.makedirs(logs, exist_ok=True)
@@ -295,7 +319,7 @@ def _log_tools_update(src_tools: str, copied: int) -> None:
             fh.write(f"{time.strftime('%H:%M:%S')} frozen={is_frozen()} "
                      f"источник={src_tools} "
                      f"существует={os.path.isdir(src_tools)} "
-                     f"обновлено={copied}\n")
+                     f"обновлено={copied} удалено={removed}\n")
     except Exception:
         pass
 
