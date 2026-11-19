@@ -145,6 +145,7 @@ fast/quality/balanced, смены языка собеседника es/en/auto, 
 | Сборка `pyinstaller --clean --noconfirm redz_voice_studio.spec` | PASS (≈1,5 мин) |
 | Артефакт | `dist/RedZVoiceStudio.exe`, 316 482 741 байт (301,8 МБ), onefile |
 | SHA-256 | `b17eaa8c7118970999c210c9331dfa536d906a7058b119aefee92788589c0ba0` |
+| Пересборка 2026-11-19 | `dist/RedZVoiceStudio.exe`, 316 676 903 байт, SHA-256 `6d60f82186620f9c6b26564f188c31c40886e4d1ddc0c2a838926d69bd44768d`; запуск не проверялся — single-instance при открытом приложении владельца |
 | Запуск EXE | PASS — окно «Auraloom», `Responding: True`, экран «Модели» отрисован |
 | QML внутри бандла | PASS — карточки ASR/MT/TTS, вкладки, статус-бар, боковое меню |
 | Остановка движка из EXE | PASS — «Остановить модели» → «[engine] модели выгружены (RSS=1678 МБ)» |
