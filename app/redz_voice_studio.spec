@@ -47,7 +47,10 @@ for src, dest in (
             # Поэтому назначение — папка, а полное имя файла задаёт basename.
             files = []
             for dirpath, dirnames, filenames in os.walk(src):
-                dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+                # archive/ — одноразовые скрипты и закрытые исследования:
+                # лежат в репозитории, но в бандл не едут.
+                dirnames[:] = [d for d in dirnames
+                               if d not in ("__pycache__", "archive")]
                 for fn in filenames:
                     full = os.path.join(dirpath, fn)
                     rel = os.path.relpath(full, src)
