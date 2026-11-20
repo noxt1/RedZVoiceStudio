@@ -11,16 +11,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 class TestLatency(unittest.TestCase):
     """Очереди воспроизведения не должны копить секунды звука."""
 
-    def test_bridge_queue_small(self):
-        """deque maxlen для потока перевода — не больше 8 блоков (~170 мс)."""
+    def test_bridge_queue_budget(self):
+        """Очередь перевода ограничена секундами, а не 8 чанками.
+
+        Движок отдаёт готовый перевод пачкой (куски ~0,5 с). maxlen=8
+        обрезал всё, что длиннее ~4 с: хвост перевода не доходил.
+        """
         path = os.path.join(os.path.dirname(__file__), "..", "app",
                             "mic_bridge.py")
         with open(path, encoding="utf-8") as fh:
             src = fh.read()
-        # maxlen=64 давал ~1.4 с задержки
-        self.assertNotIn("deque(maxlen=64)", src,
-                         "очередь на 64 блока даёт задержку ~1.4 с")
-        self.assertIn("deque(maxlen=8)", src)
+        self.assertNotIn("deque(maxlen=8)", src,
+                         "8 чанков обрезают длинные фразы")
+        self.assertIn("STREAM_MAX_SEC", src,
+                      "нужен предел очереди в секундах")
+        self.assertIn("self._stream_len", src,
+                      "нужен учёт длины очереди в сэмплах")
 
     def test_mic_blocks_small(self):
         """Буфер микрофона тоже уменьшен."""

@@ -234,6 +234,8 @@ MODES: dict[str, dict] = {
         "beam": 1,
         "stream_chunk": 20,
         "verify": 0,
+        # короткие фразы тоже отдаём по мере синтеза (без проверки)
+        "stream_short": True,
         "mt_device": "cpu",
     },
     "balanced": {
@@ -242,6 +244,9 @@ MODES: dict[str, dict] = {
         "beam": 1,
         "stream_chunk": 30,
         "verify": 1,
+        # Замер: стриминг короткой фразы — 481 мс до первого звука
+        # вместо 1111 мс при полном синтезе с проверкой.
+        "stream_short": True,
         "mt_device": "cpu",
     },
     "quality": {
@@ -250,6 +255,7 @@ MODES: dict[str, dict] = {
         "beam": 3,
         "stream_chunk": 40,
         "verify": 2,
+        "stream_short": False,
         "mt_device": "cpu",
     },
     "manual": {
@@ -258,6 +264,7 @@ MODES: dict[str, dict] = {
         "beam": 1,
         "stream_chunk": 30,
         "verify": 1,
+        "stream_short": False,
         "mt_device": "cpu",
     },
 }
@@ -446,6 +453,10 @@ class Engine:
         self.beam_size = 1
         self.stream_chunk = STREAM_CHUNK
         self.verify_attempts = 1
+        # Стримить и короткие фразы (без полного синтеза и проверки).
+        # Включается режимом Fast/Balanced: первый звук приходит раньше,
+        # но проверка распознаванием для этих фраз не выполняется.
+        self.stream_short = True
         self.mt_device = MT_DEVICE
         # Поколение результатов: растёт при любой смене настроек, старые
         # результаты после неё отбрасываются (generation guards).
@@ -609,6 +620,7 @@ class Engine:
             "beam_size": self.beam_size,
             "stream_chunk": self.stream_chunk,
             "verify_attempts": self.verify_attempts,
+            "stream_short": self.stream_short,
             "mt_device": self.mt_device,
             "asr_alternatives": len(avail),
             "tts_alternatives": 1,
@@ -632,6 +644,7 @@ class Engine:
             self.beam_size = int(conf["beam"])
             self.stream_chunk = int(conf["stream_chunk"])
             self.verify_attempts = int(conf["verify"])
+            self.stream_short = bool(conf.get("stream_short", False))
             if conf["mt_device"] != self.mt_device:
                 self.mt_device = conf["mt_device"]
                 self._clear_mt_cache()
@@ -651,7 +664,8 @@ class Engine:
         info = self.mode_info()
         log(f"[engine] режим: {info['title']} — ASR {info['asr_model']} "
             f"({info['asr_compute']}, beam {info['beam_size']}), "
-            f"TTS chunk {info['stream_chunk']}, проверок {info['verify_attempts']}")
+            f"TTS chunk {info['stream_chunk']}, проверок {info['verify_attempts']}, "
+            f"стриминг коротких: {'да' if info['stream_short'] else 'нет'}")
         emit({"event": "mode", **info})
         return info
 
@@ -2012,26 +2026,14 @@ class Engine:
 
         short = len(text.split()) <= 6
 
-        if not short:
-            # длинная фраза: потоком, без ожидания и без обработки
-            try:
-                import torch
-                # Вариативный seed: фиксированный 1234 давал монотонность.
-                self._seed_counter = getattr(self, "_seed_counter", 0) + 1
-                seed = (abs(hash(spoken)) % 100000) + self._seed_counter * 7919
-                torch.manual_seed(seed)
-                for c in self.tts.inference_stream(
-                        spoken, xtts_language(tts_code), self.gpt_latent,
-                        self.spk_emb, stream_chunk_size=self.stream_chunk,
-                        overlap_wav_len=2048, **params):
-                    self._emit_chunk(c.detach().cpu().numpy(), seq)
-            except Exception as exc:
-                log(f"[engine] синтез не удался: {type(exc).__name__}: {exc}")
-            emit({"event": "done", "seq": seq,
-                  "ms": int((time.time() - t0) * 1000)})
+        # Длинные фразы всегда идут потоком. Короткие — тоже, если режим
+        # это разрешает: полный синтез + проверка распознаванием задерживали
+        # первый звук на ~0,6 с (замер: 1111 мс против 481 мс у длинных).
+        if not short or self.stream_short:
+            self._stream_speak(spoken, params, seq, tts_code)
             return
 
-        # короткая фраза: синтезируем целиком, проверяем, обрабатываем
+        # короткая фраза в Quality/Manual: целиком, с проверкой и обработкой
         audio = np.zeros(0, dtype=np.float32)
         for attempt in range(1 + self.verify_attempts):
             audio = self._synth_full(spoken, params, 1234 + attempt * 7919,
@@ -2051,6 +2053,31 @@ class Engine:
             for part in np.array_split(audio, max(1, len(audio) // 12000)):
                 self._emit_chunk(part, seq)
         emit({"event": "done", "seq": seq, "ms": int((time.time() - t0) * 1000)})
+
+    def _stream_speak(self, spoken: str, params: dict, seq: int,
+                      tts_code: str) -> None:
+        """Синтез потоком: отдали кусок — сразу в кабель.
+
+        Без полного синтеза, проверки распознаванием и `add_life`: именно
+        они держали первый звук до конца фразы. Проверка остаётся в
+        Quality/Manual, где задержка не главное.
+        """
+        t0 = time.time()
+        try:
+            import torch
+            # Вариативный seed: фиксированный 1234 давал монотонность.
+            self._seed_counter = getattr(self, "_seed_counter", 0) + 1
+            seed = (abs(hash(spoken)) % 100000) + self._seed_counter * 7919
+            torch.manual_seed(seed)
+            for c in self.tts.inference_stream(
+                    spoken, xtts_language(tts_code), self.gpt_latent,
+                    self.spk_emb, stream_chunk_size=self.stream_chunk,
+                    overlap_wav_len=2048, **params):
+                self._emit_chunk(c.detach().cpu().numpy(), seq)
+        except Exception as exc:
+            log(f"[engine] синтез не удался: {type(exc).__name__}: {exc}")
+        emit({"event": "done", "seq": seq,
+              "ms": int((time.time() - t0) * 1000)})
 
     def speak_incoming(self, text: str, seq: int = 0,
                        voice_profile: str | None = None) -> None:

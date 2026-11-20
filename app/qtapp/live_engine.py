@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import os
 import threading
+import time
 
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer
@@ -30,6 +31,8 @@ BLOCK_SEC = 0.05
 SILENCE_END = 0.75
 MIN_SPEECH = 0.35
 MAX_SEG = 25.0
+# Сколько ждать перевод после отпускания PTT, прежде чем вернуть русский.
+HOLD_MAX_WAIT = 20.0
 
 # Сегментация звука собеседника (системный звук через loopback).
 PEER_SILENCE_END = 0.80
@@ -91,7 +94,7 @@ class LiveEngine(QObject):
         # --- режим PTT («зажать») ---
         self._hold_on = False
         self._hold_wait_play = False
-        self._hold_vk = 0
+        self._hold_release_at = 0.0
 
         # --- непрерывный режим ---
         self._cont_on = False
@@ -618,7 +621,9 @@ class LiveEngine(QObject):
         self._stop_input()
         self._cont_on = False
         self._hold_on = False
+        self._hold_wait_play = False
         self._hold_timer.stop()
+        self._duck(False)
         self._poll_timer.stop()
         self._level_timer.stop()
         if self._translator is not None:
@@ -850,7 +855,6 @@ class LiveEngine(QObject):
         self._strong_blocks = 0
         self._noise = 0.005
         self._open_input(self._cont_callback)
-        self._hold_timer.start()
         self._level_timer.start()
         self._duck(True)
         self.translationStarted.emit()
@@ -859,18 +863,41 @@ class LiveEngine(QObject):
         if not self._hold_on:
             return
         self._hold_on = False
-        self._hold_timer.stop()
         self._level_timer.stop()
         self._close_input()
         self._flush_segment()
         self._hold_wait_play = True
+        # Таймер запускается только здесь: он единственный, кто снимет
+        # _hold_wait_play и вернёт русский в кабель.
+        self._hold_release_at = time.monotonic()
+        self._hold_timer.start()
+
+    def _bridge_pending(self) -> bool:
+        """Есть ли ещё недозвучавший перевод в мосту."""
+        bridge = self.bridge
+        if bridge is None or not getattr(bridge, "running", False):
+            return False
+        try:
+            return bool(bridge.stream_pending())
+        except Exception:
+            return False
 
     def _check_hold(self) -> None:
-        if self._hold_wait_play and not self._playback_busy():
-            if not self._busy:
-                self._hold_wait_play = False
-                self._duck(False)
-                self.translationFinished.emit()
+        if not self._hold_wait_play:
+            self._hold_timer.stop()
+            return
+        # Перевод может доигрывать в мосту — тогда русский возвращать
+        # нельзя, иначе он ляжет поверх перевода. Страховка: если движок
+        # не ответил, русский не должен замолкнуть навсегда.
+        stuck = time.monotonic() - self._hold_release_at > HOLD_MAX_WAIT
+        if stuck or not (self._bridge_pending() or self._playback_busy()
+                         or self._busy):
+            self._hold_wait_play = False
+            self._hold_timer.stop()
+            self._duck(False)
+            self.translationFinished.emit()
+            if stuck:
+                self.logLine.emit("перевод не подтвердился — русский возвращён")
 
     # ==================================================================
     # НЕПРЕРЫВНЫЙ РЕЖИМ
@@ -1294,11 +1321,12 @@ class LiveEngine(QObject):
         bridge = self.bridge
         if bridge is None or not getattr(bridge, "running", False):
             return
-        try:
-            pending = bool(bridge.stream_pending())
-        except Exception:
-            pending = False
-        need = bool(self._busy or self._playback_busy() or pending)
+        # «Фильтр русского»: пока зажата кнопка захвата, русский в кабель
+        # НЕ идёт вообще — ни до первого слова перевода, ни между фразами.
+        # Раньше заглушка считалась только по busy/playback, поэтому
+        # собеседник слышал русский ДО перевода и ПОСЛЕ него.
+        need = bool(self._hold_on or self._hold_wait_play or self._busy
+                    or self._playback_busy() or self._bridge_pending())
         try:
             bridge.set_duck(need)
         except Exception:
@@ -1314,26 +1342,23 @@ class LiveEngine(QObject):
 
     def _check_bridge(self, bridge) -> None:
         """Раз в секунду: жив ли выход моста и не теряются ли чанки."""
-        import time
         now = time.monotonic()
         if now - self._bridge_check < 1.0:
             return
         self._bridge_check = now
         try:
             msg = bridge.ensure_alive()
+            if msg and msg != self._bridge_note:
+                self._bridge_note = msg
+                self._log_play("мост: " + msg)
+            dropped = int(bridge.stream_dropped)
+            if dropped != self._bridge_dropped:
+                self._bridge_dropped = dropped
+                self._log_play(
+                    f"мост: очередь переполнена, потеряно чанков {dropped} "
+                    f"(~{bridge.stream_dropped_sec:.1f} с)")
         except Exception:
-            msg = ""
-        if msg and msg != self._bridge_note:
-            self._bridge_note = msg
-            self._log_play("мост: " + msg)
-        try:
-            dropped = int(getattr(bridge, "stream_dropped", 0))
-        except Exception:
-            dropped = 0
-        if dropped != self._bridge_dropped:
-            self._bridge_dropped = dropped
-            self._log_play(
-                f"мост: очередь переполнена, потеряно чанков {dropped}")
+            pass
 
     def _duck(self, flag: bool) -> None:
         bridge = self.bridge

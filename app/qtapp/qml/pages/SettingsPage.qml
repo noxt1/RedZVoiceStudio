@@ -8,6 +8,7 @@ Item {
     id: page
 
     property string hkDraft: appState.hotkeyCombo
+    property string diagText: ""
 
     property var micItems: []
     property int micIndex: -1
@@ -84,6 +85,16 @@ Item {
     }
 
     Component.onCompleted: refreshDevices()
+
+    // Снимок диагностики обновляется раз в секунду: устройства и мост
+    // меняются на лету, а обновлять всё окно из-за этого не нужно.
+    Timer {
+        interval: 1000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: page.diagText = appState.diagnostics()
+    }
 
     Connections {
         target: appState
@@ -417,6 +428,48 @@ Item {
                                 text: "отброшено: " + (liveEngine.lastMetrics["dropped"] || 0)
                                       + " · отменено: " + (liveEngine.lastMetrics["cancelled"] || 0)
                                       + " · logs/diagnostics.log"
+                                color: Theme.textMuted
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Rectangle { width: parent.width; height: 1; color: Theme.border }
+
+                            Text {
+                                width: parent.width
+                                text: page.diagText
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamilyMono
+                                font.pixelSize: 10
+                                lineHeight: 1.3
+                                wrapMode: Text.WrapAnywhere
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: 8
+                                AppButton {
+                                    width: 170
+                                    controlHeight: 34
+                                    text: "Собрать отчёт"
+                                    onClicked: appState.collectReport()
+                                }
+                                AppButton {
+                                    width: 150
+                                    controlHeight: 34
+                                    text: "Открыть папку"
+                                    flat: true
+                                    visible: appState.reportPath !== ""
+                                    onClicked: appState.openReportsFolder()
+                                }
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: appState.reportStatus !== ""
+                                      ? (appState.reportStatus + ". Логи и настройки, без истории и образцов голоса.")
+                                      : "Отчёт: логи, настройки и версия сборки. История переводов и образцы голоса в него не попадают."
                                 color: Theme.textMuted
                                 font.family: Theme.fontFamilyText
                                 font.pixelSize: 10

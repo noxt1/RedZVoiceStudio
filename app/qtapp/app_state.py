@@ -15,8 +15,11 @@ import os
 import threading
 import time
 
-from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 
+import branding
+import reports
 import studio_paths as sp
 import studio_core as core
 import hotkeys as hk
@@ -51,6 +54,7 @@ class AppState(QObject):
     settingsChanged = Signal()                # пользовательские настройки UI
     profilesChanged = Signal()                # профили голоса / активный профиль
     phrasesChanged = Signal()                 # свои фразы добавлены/удалены
+    reportChanged = Signal()                  # отчёт для поддержки собран
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -59,6 +63,9 @@ class AppState(QObject):
         self._bridge_on = False
         self._hotkeys_on = False
         self._busy = False
+        # отчёт для поддержки: путь к последнему zip и статус
+        self._report_path = ""
+        self._report_status = ""
 
         # --- GPU / VRAM (карточка на главной) ---
         self._vram_used = 0
@@ -679,6 +686,97 @@ class AppState(QObject):
         if self._engine_state == STATE_ERROR:
             return self._engine_error or "ошибка"
         return "остановлен"
+
+    # ------------------------------------------------------------------
+    # Диагностика и отчёт для поддержки
+    # ------------------------------------------------------------------
+    @Property(str, notify=reportChanged)
+    def reportPath(self) -> str:
+        return self._report_path
+
+    @Property(str, notify=reportChanged)
+    def reportStatus(self) -> str:
+        return self._report_status
+
+    @Slot(result=str)
+    def diagnostics(self) -> str:
+        """Снимок того, что нужно для разбора: устройства, мост, движок."""
+        eng = getattr(self, "_live_engine", None)
+        in_name = self._device_name(self._in_list, self._in_device)
+        out_name = self._device_name(self._out_list, self._out_device)
+        lines = [f"Auraloom {branding.APP_VERSION} · режим {self._mode}",
+                 f"движок: {self.engineStatusText()}"]
+        if eng is not None:
+            for label, attr in (("ASR", "asrModel"), ("TTS", "ttsModel")):
+                try:
+                    value = getattr(eng, attr, "") or ""
+                except Exception:
+                    value = ""
+                if value:
+                    lines.append(f"{label}: {value}")
+        lines.append(f"микрофон: {in_name or '—'}")
+        lines.append(f"выход: {out_name or '—'}")
+        lines.append(f"кабель: {self.cableStatus()} · русский микрофон в кабеле: "
+                     f"{'да' if self._cable_mic else 'нет'}")
+        bridge = self.bridge
+        if bridge is not None:
+            try:
+                st = bridge.status()
+                lines.append(
+                    f"мост: {'работает' if st.get('running') else 'стоит'} · "
+                    f"{st.get('sr')} Гц · наушники "
+                    f"{'ок' if st.get('monitor_ok') else 'нет'} "
+                    f"({st.get('monitor_sr') or '—'} Гц)")
+                lines.append(
+                    "потеряно: "
+                    f"{getattr(bridge, 'stream_dropped', 0)} кусков "
+                    f"({getattr(bridge, 'stream_dropped_sec', 0.0):.1f} с)")
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"мост: статус не прочитан ({exc})")
+        else:
+            lines.append("мост: выключен")
+        if eng is not None:
+            try:
+                metrics = dict(eng.lastMetrics or {})
+            except Exception:
+                metrics = {}
+            if metrics:
+                parts = [f"{k}={v}" for k, v in metrics.items()
+                         if k in ("asr_ms", "mt_ms", "tts_first_ms",
+                                  "total_ms", "queue", "dropped")]
+                if parts:
+                    lines.append("последняя реплика: " + ", ".join(parts))
+        return "\n".join(lines)
+
+    @Slot()
+    def collectReport(self) -> None:
+        """Собрать zip с логами и снимком диагностики (в фоне)."""
+        if self._report_status == "собираю…":
+            return
+        self._report_status = "собираю…"
+        self.reportChanged.emit()
+        snapshot = self.diagnostics()
+
+        def worker() -> None:
+            try:
+                path = reports.collect(snapshot)
+                self._report_path = path
+                self._report_status = "готов: " + os.path.basename(path)
+            except Exception as exc:  # noqa: BLE001
+                self._report_status = f"не собрался: {exc}"
+            self.reportChanged.emit()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot()
+    def openReportsFolder(self) -> None:
+        folder = os.path.dirname(self._report_path) if self._report_path \
+            else os.path.join(sp.workspace(), "reports")
+        try:
+            os.makedirs(folder, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        except Exception as exc:  # noqa: BLE001
+            self.statusMessage.emit(f"папка не открылась: {exc}", "err")
 
     @Slot(str)
     def setName(self, name: str) -> None:

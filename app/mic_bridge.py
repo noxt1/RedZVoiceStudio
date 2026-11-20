@@ -15,6 +15,13 @@ import numpy as np
 BLOCK = 1024        # размер блока
 RATE_CANDIDATES = (48000, 44100, 32000, 16000)
 
+# Предел очереди перевода в СЕКУНДАХ. Движок отдаёт готовый перевод
+# пачкой (куски по ~0,5 с), поэтому ограничение «8 чанков» обрезало
+# длинные фразы: хвост не доходил до кабеля. Предел должен быть БОЛЬШЕ
+# самой длинной фразы движка (MAX_SEG = 25 с), иначе обрезка вернётся;
+# 30 с — это MAX_SEG плюс запас. 30 с моно float32 — ~5,6 МБ на шину.
+STREAM_MAX_SEC = 30.0
+
 # Порог мягкого лимитера: выше начинается плавное сжатие.
 LIMIT_THRESHOLD = 0.90
 
@@ -87,7 +94,6 @@ class MicBridge:
         # тогда данные для наушников ресемплим заранее (в push_*).
         self._mon_sr = 0
         self.monitor_error = ""
-        self._mon_was_pushed = False
 
         self.sr = pick_sample_rate(mic_device, render_device)
         self._mic_blocks: deque[np.ndarray] = deque(maxlen=16)
@@ -101,14 +107,16 @@ class MicBridge:
         self._mic_gain_now = 0.0
         # сколько чанков перевода потеряно из-за переполнения очереди
         self.stream_dropped = 0
+        self.stream_dropped_samples = 0
         self._phrase: np.ndarray | None = None
         self._phrase_pos = 0
-        # потоковое аудио (живой перевод): очередь чанков.
-        # maxlen=8 при блоке 1024/48кГц — максимум ~170 мс буфера.
-        # Раньше было 64 (~1.4 с), и перевод опаздывал на секунду с лишним.
-        self._stream_q: deque[np.ndarray] = deque(maxlen=8)
+        # Потоковое аудио (живой перевод): очередь чанков без maxlen —
+        # ограничиваем не числом кусков, а длиной в сэмплах.
+        self._stream_q: deque[np.ndarray] = deque()
+        self._stream_len = 0
         # очередь для наушников (что слышит игрок)
-        self._mon_q: deque[np.ndarray] = deque(maxlen=8)
+        self._mon_q: deque[np.ndarray] = deque()
+        self._mon_len = 0
         self._lock = threading.Lock()
         self._in = None
         self._out = None
@@ -144,9 +152,11 @@ class MicBridge:
             if self._mic_blocks:
                 chunk = self._mic_blocks.popleft()
             else:
-                chunk = np.zeros(BLOCK, dtype=np.float32)
+                chunk = np.zeros(0, dtype=np.float32)
             if len(chunk) < frames:
                 chunk = np.pad(chunk, (0, frames - len(chunk)))
+            elif len(chunk) > frames:
+                chunk = chunk[:frames]
 
             phrase_part = np.zeros(frames, dtype=np.float32)
             if self._phrase is not None:
@@ -159,25 +169,34 @@ class MicBridge:
                         self._phrase = None
                         self._phrase_pos = 0
 
-            # потоковое аудио (живой перевод) — приоритетнее готовой фразы
+            # потоковое аудио (живой перевод) — тянем из очереди столько
+            # чанков, сколько нужно на целый блок: короткие куски не должны
+            # оставлять провалы между собой.
             stream_part = np.zeros(frames, dtype=np.float32)
-            if self._stream_q:
-                stream_chunk = self._stream_q.popleft()
-                take = min(frames, len(stream_chunk))
-                if take > 0:
-                    stream_part[:take] = stream_chunk[:take]
-                    if take < len(stream_chunk):
-                        self._stream_q.appendleft(stream_chunk[take:])
+            pos = 0
+            while pos < frames and self._stream_q:
+                head = self._stream_q[0]
+                take = min(frames - pos, len(head))
+                if take <= 0:
+                    self._stream_q.popleft()
+                    continue
+                stream_part[pos:pos + take] = head[:take]
+                self._stream_len = max(0, self._stream_len - take)
+                if take < len(head):
+                    self._stream_q[0] = head[take:]
+                else:
+                    self._stream_q.popleft()
+                pos += take
 
         # «заглушка»: пока она включена, русский голос в кабель НЕ идёт —
         # слышен только перевод (переключатель языка)
-        # Плавное затухание/нарастание: без него русский «резко обрывался»
-        # при нажатии PTT и резко возвращался после перевода.
+        # Затухание быстрое (чтобы русский не лез в первые слова перевода),
+        # возврат плавный: без него русский «резко обрывался».
         target = 0.0 if self.ducked else self.mic_gain
         if self._mic_gain_now < target:
-            self._mic_gain_now = min(target, self._mic_gain_now + 0.10)
+            self._mic_gain_now = min(target, self._mic_gain_now + 0.08)
         else:
-            self._mic_gain_now = max(target, self._mic_gain_now - 0.10)
+            self._mic_gain_now = max(target, self._mic_gain_now - 0.25)
         mic_gain = self._mic_gain_now
         mix = chunk * mic_gain + (phrase_part + stream_part) * self.phrase_gain
         # Общая громкость кабеля
@@ -197,6 +216,11 @@ class MicBridge:
         self._mic_blocks.clear()
         self._phrase = None
         self._phrase_pos = 0
+        with self._lock:
+            self._stream_q.clear()
+            self._stream_len = 0
+            self._mon_q.clear()
+            self._mon_len = 0
 
         mic_kwargs = {"device": self.mic_device} if self.mic_device is not None else {}
         out_kwargs = {"device": self.render_device} if self.render_device is not None else {}
@@ -239,6 +263,7 @@ class MicBridge:
                 self._mon = stream
                 self._mon_sr = int(rate)
                 self._mon_q.clear()
+                self._mon_len = 0
             self.monitor_error = ""
             return
         # Не смогли — не роняем мост: кабель и микрофон должны работать.
@@ -264,6 +289,7 @@ class MicBridge:
                 pass
         with self._lock:
             self._mon_q.clear()
+            self._mon_len = 0
             self._mon_sr = 0
         if device is not None:
             self._open_monitor()
@@ -303,6 +329,7 @@ class MicBridge:
                     self._mon_q.popleft()
                     continue
                 out[pos:pos + take] = chunk[:take] * self.monitor_gain
+                self._mon_len = max(0, self._mon_len - take)
                 if take < len(chunk):
                     self._mon_q[0] = chunk[take:]
                 else:
@@ -401,14 +428,18 @@ class MicBridge:
         mon = self._resample(data, self.sr, self._mon_sr) \
             if self._mon_sr else data
         with self._lock:
-            # maxlen не даёт копить задержку, но старый чанк при этом теряется:
-            # считаем такие потери, иначе «пропал звук» выглядит загадочно.
-            if len(self._stream_q) >= self._stream_q.maxlen:
+            # Держим до STREAM_MAX_SEC звука: движок отдаёт фразу пачкой,
+            # и раньше хвост длинных фраз просто терялся.
+            limit = int(self.sr * STREAM_MAX_SEC)
+            while self._stream_q and self._stream_len + len(data) > limit:
+                lost = self._stream_q.popleft()
+                self._stream_len -= len(lost)
                 self.stream_dropped += 1
+                self.stream_dropped_samples += len(lost)
             self._stream_q.append(data.astype(np.float32))
-            if self.monitor_device is not None and mon is not None:
-                self._mon_q.append(mon.astype(np.float32))
-                self._mon_was_pushed = True
+            self._stream_len += len(data)
+            if mon is not None:
+                self._push_monitor(mon)
         return True
 
     def push_incoming_pcm(self, pcm: np.ndarray, sr: int) -> bool:
@@ -432,10 +463,30 @@ class MicBridge:
         mon = self._resample(data, self.sr, self._mon_sr) \
             if self._mon_sr else data
         with self._lock:
-            if self.monitor_device is not None and mon is not None:
-                self._mon_q.append(mon.astype(np.float32))
-                self._mon_was_pushed = True
+            if mon is not None:
+                self._push_monitor(mon)
         return True
+
+    def _push_monitor(self, mon: np.ndarray) -> None:
+        """Положить пачку в шину наушников (вызывать под self._lock).
+
+        В шину кладём только если наушники подключены к мосту; иначе
+        очередь копилась бы впустую.
+        """
+        if self.monitor_device is None:
+            return
+        mon = np.asarray(mon, dtype=np.float32)
+        limit = int((self._mon_sr or self.sr) * STREAM_MAX_SEC)
+        while self._mon_q and self._mon_len + len(mon) > limit:
+            lost = self._mon_q.popleft()
+            self._mon_len -= len(lost)
+        self._mon_q.append(mon)
+        self._mon_len += len(mon)
+
+    @property
+    def stream_dropped_sec(self) -> float:
+        """Сколько секунд перевода потеряно из-за переполнения очереди."""
+        return self.stream_dropped_samples / max(1, self.sr)
 
     @staticmethod
     def _resample(data: np.ndarray, src: int, dst: int) -> np.ndarray | None:
@@ -452,13 +503,16 @@ class MicBridge:
         return np.interp(x_out, x_in, data).astype(np.float32)
 
     def clear_stream(self) -> None:
-        """Убрать весь недозвучавший перевод из очереди.
+        """Убрать весь недозвучавший перевод (кабель и наушники).
 
         Нужно, когда перевод выключают: иначе уже отправленные чанки
         продолжают играть ПАРАЛЛЕЛЬНО с живым русским голосом.
         """
         with self._lock:
             self._stream_q.clear()
+            self._stream_len = 0
+            self._mon_q.clear()
+            self._mon_len = 0
 
     def stream_pending(self) -> bool:
         """Есть ли ещё аудио перевода в очереди воспроизведения?

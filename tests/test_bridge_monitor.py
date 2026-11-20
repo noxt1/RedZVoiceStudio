@@ -43,6 +43,31 @@ class BridgeMonitorQueue(unittest.TestCase):
         self.assertEqual(len(bridge._mon_q), 1)
         self.assertEqual(len(bridge._stream_q), 1)
 
+    def test_long_burst_not_truncated(self):
+        """Регрессия: длинная фраза приходила пачкой и теряла хвост.
+
+        Движок отдаёт куски по 0,5 с (12000 сэмплов @24 кГц) сразу все.
+        Очередь на 8 чанков выбрасывала остаток, и в Discord доходила
+        только часть перевода.
+        """
+        bridge = self._bridge()
+        bridge._mic_blocks.clear()
+        chunk = np.ones(12000, dtype=np.float32)   # 0.5 с @ 24 кГц
+        for _ in range(12):                        # 6 с перевода
+            bridge.push_pcm(chunk, 24000)
+        self.assertEqual(bridge.stream_dropped, 0)
+        self.assertEqual(bridge._stream_len, 12 * 12000 * 2)
+        out = np.zeros((1024, 1), dtype=np.float32)
+        played = 0
+        for _ in range(400):
+            if not bridge.stream_pending():
+                break
+            bridge._mix_out(out, 1024)
+            played += int((out[:, 0] > 0.5).sum())
+        self.assertEqual(played, 12 * 12000 * 2,
+                         "перевод должен дойти целиком")
+        self.assertFalse(bridge.stream_pending())
+
     def test_mic_gain_untouched_by_volume_helpers(self):
         bridge = self._bridge()
         bridge.set_gains(phrase_gain=0.5, monitor_gain=0.7, out_gain=0.8)

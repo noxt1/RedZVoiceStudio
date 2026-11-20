@@ -98,6 +98,10 @@
 | `nav_key_check.py` | `Tab` → `Down` ×2 → `Enter` меняет раздел (QTest, offscreen) |
 | `test_qml_render.py` | рендер QML в offscreen через `QQuickRenderControl` |
 | `check_shot.py` | проверка скриншота без человека: непустые пиксели, число цветов, полосы |
+| `check_parity_offline.py` | пункты FEATURE_PARITY без оборудования: single-instance, полный экран, копирование и прослушивание фраз, образец, профиль, reference, replay (offscreen, звук — через Stereo Mix) |
+| `live_path_check.py` | сквозной аудиопуть без устройств: длинный перевод целиком, заглушка русского, `clear_stream`, предел очереди; `--json` |
+| `bench_live.py` | запас по времени микшера/монитора/ресемплера, soak на 30 минут звука, RSS; `--quick`, `--soak`, `--json` |
+| `measure_tts.py` | задержка первого звука TTS на живом движке (команда `speak`); два прогона до/после дают сравнение |
 | `diag_pages.py` | что реально отрисовано на каждой странице |
 | `shot_pages.py`, `shot_voices.py` | скриншоты страниц/под-вкладок (импортируют `tkinter` ради DPI — проверять, что снимают Qt-окна) |
 | `switch_tab.py`, `view_tab.py` | переключить вкладку и снять скриншот (эпоха Tk) |
