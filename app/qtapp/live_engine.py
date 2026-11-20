@@ -31,6 +31,15 @@ BLOCK_SEC = 0.05
 SILENCE_END = 0.75
 MIN_SPEECH = 0.35
 MAX_SEG = 25.0
+# Порог обнаружения речи. Раньше здесь стоял абсолютный 0.006 (−44 dBFS)
+# плюс требование «громких блоков» относительно него: тихая, но чистая
+# речь порог не превышала, и фраза целиком не доходила до Whisper (замер
+# в Documentation/INVESTIGATIONS/MICROPHONE_INPUT_QUALITY.md). Теперь
+# порог считается от шума комнаты, а абсолютный уровень только страхует
+# от нуля.
+ABS_SPEECH = 0.0012      # −58 dBFS — ниже этого речь не бывает
+DETECT_RATIO = 2.5       # речь = в 2,5 раза громче шума комнаты
+NOISE_HISTORY = 600      # 30 с блоков по 50 мс: 10-й процентиль = шум
 # Сколько ждать перевод после отпускания PTT, прежде чем вернуть русский.
 HOLD_MAX_WAIT = 20.0
 
@@ -101,7 +110,8 @@ class LiveEngine(QObject):
         self._cont_buf: list[np.ndarray] = []
         self._cont_silence = 0.0
         self._cont_has_speech = False
-        self._noise = 0.005
+        self._noise = ABS_SPEECH * 0.5
+        self._diag = None
         self._rms_history: list[float] = []
         self._smooth: list[float] = []
         self._strong_blocks = 0
@@ -853,7 +863,7 @@ class LiveEngine(QObject):
         self._cont_silence = 0.0
         self._cont_has_speech = False
         self._strong_blocks = 0
-        self._noise = 0.005
+        self._noise = ABS_SPEECH * 0.5
         self._open_input(self._cont_callback)
         self._level_timer.start()
         self._duck(True)
@@ -929,7 +939,7 @@ class LiveEngine(QObject):
         self._cont_buf = []
         self._cont_silence = 0.0
         self._cont_has_speech = False
-        self._noise = 0.005
+        self._noise = ABS_SPEECH * 0.5
         self._open_input(self._cont_callback)
         self._level_timer.start()
         self.logLine.emit("непрерывный режим включён")
@@ -989,19 +999,26 @@ class LiveEngine(QObject):
         lvl = max(0.0, min(1.0, (db + 55.0) / 55.0))
         self._level = max(lvl, self._level * 0.55)
         self._rms_history.append(rms)
-        if len(self._rms_history) > 240:
+        if len(self._rms_history) > NOISE_HISTORY:
             self._rms_history.pop(0)
-        floor = float(np.percentile(self._rms_history, 20))
-        self._noise = floor
-        thr = max(floor * 3.0, 0.006)
+        # Шум комнаты — 10-й процентиль длинной истории, а не 20-й по 12 с:
+        # 20-й процентиль попадал внутрь речи, порог уезжал выше тихой речи
+        # и растушёвывал её целиком.
+        floor = float(np.percentile(self._rms_history, 10))
+        self._noise = max(floor, ABS_SPEECH * 0.5)
+        thr = max(floor * DETECT_RATIO, ABS_SPEECH)
         self._smooth.append(rms)
         if len(self._smooth) > 5:
             self._smooth.pop(0)
         smooth = sum(self._smooth) / len(self._smooth)
-        if smooth > thr:
+        # Гистерезис: короткая пауза внутри фразы не рвёт сегмент, тихое
+        # окончание не отрезается на первом же блоке ниже порога.
+        active = smooth > thr or (self._cont_has_speech
+                                 and smooth > thr * 0.45)
+        if active:
             self._cont_has_speech = True
             self._cont_silence = 0.0
-            if rms > thr * 1.5:
+            if smooth > thr:
                 self._strong_blocks += 1
         else:
             self._cont_silence += BLOCK_SEC
@@ -1022,22 +1039,67 @@ class LiveEngine(QObject):
         self._cont_silence = 0.0
         if not buf or not had_speech:
             return
-        if strong < 3:
+        # 2 блока (100 мс) выше порога — минимум, чтобы считать это речью;
+        # раньше требовалось 3 блока выше thr*1.5, и тихая речь отсекалась.
+        if strong < 2:
             return
-        audio = np.concatenate(buf)
-        audio = self._trim_silence(audio)
+        raw = np.concatenate(buf)
+        audio = self._trim_silence(raw)
         dur = len(audio) / SR_REC
         if dur < MIN_SPEECH:
             return
-        seg_rms = float(np.sqrt((audio.astype(np.float64) ** 2).mean()))
-        floor = self._noise if self._noise > 0 else 0.001
-        if seg_rms < floor * 2.2:
+        # Было `seg_rms < floor * 2.2`: абсолютный уровень шума комнаты
+        # отбрасывал ТИХУЮ речь ещё до нормализации в движке. Теперь решает
+        # структура внутри сегмента — речь это или ровный шум.
+        if not self._has_speech_structure(audio):
+            self._diag_stage(raw, audio, None, dropped=True)
             return
         # Убираем гул/шипение комнаты до отправки в Whisper: высокочастотный
         # фильтр + мягкий гейт по кадрам. Это не «шумодав» уровня RTX Voice,
         # но заметно снижает ложные фразы на фоновом телевизоре/вентиляторе.
         audio = self._denoise(audio)
+        self._diag_stage(raw, audio, None)
         self._queue_translate(audio, SR_REC)
+
+    @staticmethod
+    def _has_speech_structure(audio: np.ndarray) -> bool:
+        """В сегменте речь, а не ровный шум: громкие кадры против тихих.
+
+        Сравнение внутри самого сегмента, без абсолютных порогов: у шума
+        распределение узкое (отношение ~1,1), у речи — 3…10×. Поэтому
+        тихая речь проходит так же, как громкая.
+        """
+        if audio.size == 0:
+            return False
+        win = max(1, int(SR_REC * 0.02))
+        n = len(audio) // win
+        if n < 4:
+            return True
+        frames = np.asarray(audio, dtype=np.float64)[:n * win]
+        frames = frames.reshape(n, win)
+        rms = np.sqrt(np.mean(np.square(frames), axis=1))
+        quiet = float(np.percentile(rms, 20))
+        loud = float(np.percentile(rms, 90))
+        return loud > max(quiet * 2.0, 1e-7)
+
+    def _diag_stage(self, raw: np.ndarray, audio: np.ndarray,
+                    sr: int | None = None, dropped: bool = False) -> None:
+        """Записать уровни этапов в logs/audio_diag.log (если включено)."""
+        try:
+            import audio_diag  # noqa: PLC0415 — только при включённой диагностике
+            if not audio_diag.DiagLog.enabled():
+                return
+            if self._diag is None:
+                self._diag = audio_diag.DiagLog(
+                    os.path.join(sp.workspace(), "logs", "audio_diag.log"))
+            sr = sr or SR_REC
+            self._diag.write("capture", audio_diag.segment_metrics(raw, sr))
+            self._diag.write("trim", audio_diag.segment_metrics(
+                audio, sr, trimmed_from=len(raw)))
+            self._diag.write("denoise" if not dropped else "dropped",
+                             audio_diag.segment_metrics(audio, sr))
+        except Exception:
+            pass
 
     @staticmethod
     def _denoise(audio: np.ndarray) -> np.ndarray:
@@ -1061,7 +1123,10 @@ class LiveEngine(QObject):
             floor = float(np.percentile(rms, 15))
             # Мягкий expander: только реально шумные кадры. Агрессивный гейт
             # 0.15 срезал тихие согласные и голос звучал «рваным».
-            thr = max(floor * 1.4, 0.002)
+            # Абсолютный порог 0.002 убран: на тихой речи он оказывался выше
+            # её же согласных и подрезал окончания. Порог теперь только
+            # относительно шума ЭТОГО сегмента.
+            thr = floor * 1.4
             gain = np.where(rms < thr, 0.6, 1.0)
             # сглаживаем переходы, чтобы не было щелчков
             kernel = np.ones(3, dtype=np.float64) / 3.0
@@ -1091,7 +1156,12 @@ class LiveEngine(QObject):
         peak = float(energy.max())
         if peak <= 0:
             return audio
-        thr = max(peak * 0.06, 0.0015)
+        # Порог — от пика И от шума самой записи. Раньше было 6 % пика
+        # (−24 дБ): тихое окончание слова на фоне громкой фразы попадало
+        # ниже этого и срезалось. 0.0002 (−74 dBFS) — только защита от
+        # нуля, чтобы на чис той тишине не тянуть шум.
+        noise = float(np.percentile(energy, 10))
+        thr = max(peak * 0.03, noise * 1.8, 0.0002)
         loud = np.where(energy > thr)[0]
         if loud.size == 0:
             return audio

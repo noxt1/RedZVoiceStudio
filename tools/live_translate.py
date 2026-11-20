@@ -1563,19 +1563,35 @@ class Engine:
             g = gcd(int(sr), SR_ASR)
             audio = resample_poly(audio, SR_ASR // g, int(sr) // g).astype(np.float32)
 
-        # Проверка уровня: фрагмент должен быть заметно громче шума.
-        if floor > 0.0005:
-            seg_rms = float(np.sqrt((audio.astype(np.float64) ** 2).mean()))
-            if seg_rms < floor * 2.2:
-                log(f"[engine] фрагмент тише шума ({seg_rms:.4f} < {floor * 2.2:.4f}) "
-                    f"— пропускаю")
-                return ""
+        # Проверка уровня: решает СТРУКТУРА внутри фрагмента, а не абсолютный
+        # floor. Раньше `seg_rms < floor*2.2` выбрасывал тихую речь целиком,
+        # хотя пиковая нормализация ниже всё равно приводит её к одному
+        # уровню с громкой. Шумовой пол — 20-й процентиль кадров, громкое —
+        # 90-й: у шума они почти равны, у речи расходятся в 3…10 раз.
+        if audio.size:
+            win = int(SR_ASR * 0.02)
+            n = audio.size // win
+            if n >= 4:
+                fr = audio[:n * win].reshape(n, win).astype(np.float64)
+                fr = np.sqrt(np.mean(np.square(fr), axis=1))
+                quiet = float(np.percentile(fr, 20))
+                loud = float(np.percentile(fr, 90))
+                if loud <= max(quiet * 2.0, 1e-7):
+                    log(f"[engine] речи во фрагменте нет (тихо {quiet:.5f}, "
+                        f"громко {loud:.5f}, floor {floor:.5f}) — пропускаю")
+                    return ""
 
         # Микрофон тихий (RMS ~0.01), а Whisper ждёт нормальный уровень:
         # на тихом звуке он часто НИЧЕГО не узнаёт. Нормализуем.
         peak = float(np.abs(audio).max()) if audio.size else 0.0
         if peak > 1e-4:
             audio = audio / peak * 0.7
+
+        # Что именно получил Whisper: строка в live_engine_stderr.log.
+        # Без неё нельзя отличить «тихо записалось» от «тихо распозналось».
+        rms = float(np.sqrt(np.mean(np.square(audio.astype(np.float64)))))
+        log(f"[asr] {audio.size / SR_ASR:.2f}с rms={20.0 * np.log10(max(rms, 1e-9)):.1f}дБ "
+            f"пик={20.0 * np.log10(max(peak, 1e-9)):.1f}дБ floor={floor:.5f}")
 
         # no_speech_threshold/log_prob_threshold — отсекаем пустые сегменты
         segs, _ = self.asr.transcribe(
