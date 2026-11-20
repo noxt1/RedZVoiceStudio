@@ -1066,8 +1066,13 @@ class LiveEngine(QObject):
             # сглаживаем переходы, чтобы не было щелчков
             kernel = np.ones(3, dtype=np.float64) / 3.0
             gain = np.convolve(gain, kernel, mode="same")
-            envelope = np.repeat(gain, win)[:len(x)]
-            x = x * envelope.astype(np.float32)
+            # Огибающая на ВСЮ длину сигнала, а не на целое число окон:
+            # `np.repeat(gain, win)` давал длину count*win, и после обрезки
+            # тишины (длина уже не кратна окну) умножение падало с
+            # ValueError — фраза терялась целиком.
+            envelope = np.interp(np.arange(len(x), dtype=np.float64) / win,
+                                 np.arange(len(gain), dtype=np.float64), gain)
+            x = (x * envelope).astype(np.float32)
         peak = float(np.abs(x).max()) if x.size else 0.0
         if peak > 0.98:
             x = x / peak * 0.98
