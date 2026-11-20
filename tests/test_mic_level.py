@@ -161,6 +161,26 @@ class LevelGateTest(unittest.TestCase):
                                 silence(1.1)])
         self.assertEqual(len(run_engine(audio)), 2)
 
+    def test_ptt_without_leading_silence(self) -> None:
+        """PTT: речь с самого первого блока тоже доходит до движка.
+
+        При зажатой кнопке истории блоков ещё нет, и шумовой пол оценивать
+        не по чему. Порог не должен из-за этого оказаться выше речи.
+        """
+        for seconds in (1.0, 2.0, 4.0):
+            engine = LiveEngine()
+            engine._hold_on = True
+            captured: list[int] = []
+            engine._queue_translate = (
+                lambda pcm, sr_: captured.append(len(pcm)))
+            audio = speech_like(seconds, 0.05)
+            size = int(SR * BLOCK)
+            for i in range(0, len(audio) - size + 1, size):
+                engine._cont_callback(audio[i:i + size].reshape(-1, 1),
+                                     size, None, None)
+            engine._flush_segment()
+            self.assertEqual(len(captured), 1, f"{seconds} с: {len(captured)}")
+
     def test_segment_lengths(self) -> None:
         """Короткая, средняя и длинная фразы дают по одному сегменту."""
         for seconds in (0.5, 3.0, 8.0):

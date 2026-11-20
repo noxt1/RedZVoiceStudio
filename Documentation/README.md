@@ -48,6 +48,7 @@ PySide6 + QML (GUI, app/qtapp)  ──►  app/*.py (ядро, аудио, хо�
 | [QA_TEST_BUILD.md](QA_TEST_BUILD.md) | чек-лист тест-сборки для тестировщиков: сбор голоса, reference, клон чужого голоса |
 | [TEST_PLAN.md](TEST_PLAN.md) | уровни проверок A–E, команды, фактические результаты |
 | [CHANGELOG.md](CHANGELOG.md) | подтверждённые изменения с датами |
+| [INVESTIGATIONS/MICROPHONE_INPUT_QUALITY.md](INVESTIGATIONS/MICROPHONE_INPUT_QUALITY.md) | расследование 20.11: почему тихая речь распознавалась хуже громкой, замеры до/после, исправление порогов захвата |
 | [../README.md](../README.md) | пользовательская инструкция (установка, игра, движок) |
 | [../AUDIT.md](../AUDIT.md) | первый технический аудит (исторический документ) |
 | [../TESTING.md](../TESTING.md) | заметки по ручному тестированию |
