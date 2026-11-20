@@ -1,4 +1,4 @@
-"""Ядро RedZ Voice Studio: запись, клонирование, проверки, раскладка.
+"""Ядро Auraloom: запись, клонирование, проверки, раскладка.
 
 Вся тяжёлая работа (torch/coqui-tts/whisper) выполняется отдельным процессом
 движка, поэтому GUI не блокируется и в EXE не нужно тащить 4 ГБ torch.
@@ -43,6 +43,25 @@ def trim_by_energy(audio: np.ndarray, sr: int = SR, threshold_db: float = -38.0,
         return audio
     pad = int(sr * pad_ms / 1000.0)
     return audio[max(0, loud[0] - pad): min(len(audio), loud[-1] + pad)]
+
+
+def resample_linear(audio: np.ndarray, src_sr: int, dst_sr: int = SR) -> np.ndarray:
+    """Линейная передискретизация (без scipy — его нет в сборке EXE).
+
+    Нужна, когда микрофон отдаёт данные на своей частоте (например
+    48000 Гц), а файл пишется с меткой SR (44100 Гц). Без этого дубль
+    проигрывается быстрее и выше — характерный «писк».
+    """
+    if audio is None or len(audio) == 0 or src_sr == dst_sr:
+        return audio
+    if src_sr <= 0 or dst_sr <= 0:
+        return audio
+    n_out = int(round(len(audio) * float(dst_sr) / float(src_sr)))
+    if n_out <= 1:
+        return np.zeros(0, dtype=np.float32)
+    src = np.linspace(0.0, len(audio) - 1.0, num=len(audio))
+    dst = np.linspace(0.0, len(audio) - 1.0, num=n_out)
+    return np.interp(dst, src, audio).astype(np.float32)
 
 
 def quality_report(audio: np.ndarray, sr: int = SR) -> dict:
@@ -132,7 +151,17 @@ def remember_mic(index: int | None, name: str) -> None:
 
 
 def recalled_mic() -> tuple[int | None, str]:
-    """Запомненный микрофон (index, name) — если есть."""
+    """Запомненный микрофон (index, name) — если он всё ещё валиден.
+
+    ВАЖНО: индексы устройств PortAudio сдвигаются между сессиями (при
+    подключении/отключении гарнитуры, переустановке драйвера). Раньше
+    здесь возвращался «сырой» индекс из файла, и приложение пыталось
+    писать в устройство БЕЗ входных каналов — запись срывалась с
+    «Invalid number of channels», а тестовые дубли выходили битыми.
+
+    Теперь запомненный индекс проверяется: существует ли устройство и
+    есть ли у него входные каналы. Если нет — индекс отбрасывается.
+    """
     import json
     path = _mic_memory_file()
     if not os.path.exists(path):
@@ -140,7 +169,23 @@ def recalled_mic() -> tuple[int | None, str]:
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-        return int(data.get("index", -1)), data.get("name", "")
+        idx = int(data.get("index", -1))
+        name = data.get("name", "")
+    except Exception:
+        return None, ""
+
+    # проверяем, что индекс всё ещё указывает на микрофон
+    try:
+        import sounddevice as sd
+        dev = sd.query_devices(idx)
+        if int(dev.get("max_input_channels", 0)) <= 0:
+            return None, ""
+        # имя должно совпадать (или хотя бы устройство — не выход)
+        actual = str(dev.get("name", ""))
+        if name and actual and name.split("(")[0].strip() not in actual:
+            # имя изменилось (другой драйвер/порт) — индекс ненадёжен
+            return None, ""
+        return idx, actual or name
     except Exception:
         return None, ""
 
@@ -218,12 +263,19 @@ def estimate_snr(audio: np.ndarray, sr: int = SR) -> float:
     return float(20.0 * np.log10(max(active, 1e-9) / floor))
 
 
-def build_reference(samples: list[str], out_path: str, max_seconds: float = 25.0) -> dict:
+def build_reference(samples: list[str], out_path: str, max_seconds: float = 45.0) -> dict:
     """Собрать референс из записей.
 
-    XTTS использует не больше ~30 c референса, поэтому берём лучшие записи
-    (по «чистоте» и уровню) и обрезаем по длине. Записи упорядочиваются
-    так, чтобы самые чистые попали в начало.
+    Берём ВСЕ пригодные записи, а не только лучшие. Раньше лимит был
+    25 с и хвост молча отбрасывался — из 18 дублей в клонирование
+    попадало 8, и казалось, что «часть записей не воспроизводится».
+
+    Порядок: сначала пригодные (по качеству), потом остальные — чтобы
+    при явном переборе в reference всё же попало хоть что-то.
+
+    max_seconds защищает от патологического случая (сотни записей):
+    XTTS всё равно не использует больше ~30 с, но лучше отдать движку
+    заведомо достаточный кусок, чем обрезать речь на полуслове.
     """
     import soundfile as sf
     paths = [p for p in samples if os.path.exists(p)]
@@ -235,6 +287,9 @@ def build_reference(samples: list[str], out_path: str, max_seconds: float = 25.0
         audio, sr = sf.read(p, dtype="float32", always_2d=False)
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
+        # приводим к SR: дубли могли быть записаны на 48 кГц
+        if sr and int(sr) != SR:
+            audio = resample_linear(audio, int(sr), SR)
         rep = quality_report(audio)
         snr = estimate_snr(audio)
         # приоритет: пригодность -> чистота -> уровень
@@ -245,10 +300,13 @@ def build_reference(samples: list[str], out_path: str, max_seconds: float = 25.0
     parts: list[np.ndarray] = []
     total = 0.0
     used = 0
+    skipped = 0
     for _, _, audio, _ in scored:
         dur = len(audio) / SR
-        if total + dur > max_seconds and parts:
-            break
+        # лимит применяем только если уже что-то набрали (иначе пусто)
+        if parts and total + dur > max_seconds:
+            skipped += 1
+            continue
         parts.append(audio)
         parts.append(np.zeros(int(SR * 0.35), dtype="float32"))
         total += dur
@@ -264,7 +322,8 @@ def build_reference(samples: list[str], out_path: str, max_seconds: float = 25.0
         ref = ref / peak * 0.95
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     sf.write(out_path, ref, SR, subtype="PCM_16")
-    return {"ok": True, "path": out_path, "duration": len(ref) / SR, "count": used,
+    return {"ok": True, "path": out_path, "duration": len(ref) / SR,
+            "count": used, "total": len(paths), "skipped": skipped,
             "snr": round(scored[0][3], 1)}
 
 
@@ -435,25 +494,53 @@ PROMPTS_RU = [
 ]
 
 PROMPTS_ES = [
-    "Hola, me llamo {name}. Hoy es un dia tranquilo.",
-    "Que chido, guay! Todo bien por aqui.",
+    "¡Hola, me llamo Carlos! Hoy es un día tranquilo.",
+    "¡Qué chido, guay! Todo bien por aquí.",
     "No manches, carnal, vamos a trabajar.",
     "A huevo, ya casi terminamos.",
-    "Neta que no manches, todo chido aqui.",
-    "Que pedo, guay? Ahi esta mi dinero.",
-    "Pinche cabron, no te burles de mi.",
-    "Ya esta chido, aqui voy, no te preocupes.",
-    "Chilango de mi corazon, te quiero mucho.",
+    "Neta que no manches, todo chido aquí.",
+    "¿Qué pedo, guay? Aquí está mi dinero.",
+    "¡Pinche cabrón, no te burles de mí!",
+    "Ya está chido, aquí voy, no te preocupes.",
+    "Chilango de mi corazón, te quiero mucho.",
     "Ya ni me hable, por favor, gracias.",
-    "Arriba, todos aqui, listen bien.",
-    "Abajo, bajese de ahi, ahora.",
-    "No se mueva, manos arriba, suelte el arma.",
-    "Dispara primero, me rindo, ya no puedo mas.",
-    "Auxilio, socorro por favor, tengo un balazo en la pierna.",
+    "¡Arriba, todos aquí, listen bien!",
+    "Abajo, bájese de ahí, ahora.",
+    "¡No se mueva, manos arriba, suelte el arma!",
+    "Dispara primero, me rindo, ya no puedo más.",
+    "¡Auxilio, socorro por favor, tengo un balazo en la pierna!",
     "Acepto mi destino, no acepto, punto, me late.",
-    "Aqui esta tu dinero, no te lo lopinees, vete pal otro.",
-    "Ya me dio hambre, cafe con leche, por favor.",
+    "Aquí está tu dinero, no te quejes, vete pal otro, te toca.",
+    "Ya me dio hambre, café con leche, por favor.",
 ]
+
+# Эмоция каждой подсказки — одна на весь набор, чтобы текст, озвучка
+# и подпись «Интонация: …» всегда совпадали.
+# Ключи: friendly / angry / energetic / neutral
+PROMPT_EMOTIONS = [
+    "friendly",   # 1  приветствие
+    "friendly",   # 2  «всё отлично»
+    "energetic",  # 3  «давай работать»
+    "neutral",    # 4  «почти закончили»
+    "friendly",   # 5  «здесь всё круто»
+    "angry",      # 6  «чё за фигня»
+    "angry",      # 7  «не смейся»
+    "friendly",   # 8  «не переживай»
+    "friendly",   # 9  «ты мой друг»
+    "neutral",    # 10 «не говори со мной»
+    "energetic",  # 11 «подъём, слушайте»
+    "energetic",  # 12 «сойди оттуда, быстро»
+    "angry",      # 13 «руки вверх»
+    "angry",      # 14 «сдаюсь»
+    "angry",      # 15 «помогите»
+    "neutral",    # 16 «принимаю судьбу»
+    "angry",      # 17 «вот твои деньги»
+    "friendly",   # 18 «хочу есть»
+]
+
+# Имя, которым озвучено готовые референсы (имя пользователя в тексте
+# подставляется отдельно — в записи должно быть его собственное).
+PROMPT_REF_NAME = "Carlos"
 
 
 def export_server_resource() -> str:
@@ -537,11 +624,20 @@ def lang_module():
                             "mt": ["Helsinki-NLP/opus-mt-ru-es"],
                             "field": "es", "suffix": ""}}
             DEFAULT_LANG = "es"
-            LANG_ORDER = ("es",)
+            LANG_ORDER = ("es", "en", "ow", "it", "mg")
+            PEER_LANGS = (("auto", "авто (определить самому)"),
+                          ("es", "Испанский"),
+                          ("en", "Английский"),
+                          ("ru", "Русский"))
+            PEER_LANG_CODES = tuple(code for code, _t in PEER_LANGS)
 
             @staticmethod
             def titles():
                 return [("es", "Испанский")]
+
+            @staticmethod
+            def peer_titles():
+                return list(_Fallback.PEER_LANGS)
 
             @staticmethod
             def suffix(code):
@@ -565,6 +661,18 @@ def lang_module():
         mod = _Fallback()
     _LANG_MODULE = mod
     return mod
+
+
+def peer_lang_titles() -> list[tuple[str, str]]:
+    """Список языков речи собеседника (код, название)."""
+    try:
+        fn = getattr(lang_module(), "peer_titles", None)
+        if fn is not None:
+            return list(fn())
+    except Exception:
+        pass
+    return [("auto", "авто (определить самому)"), ("es", "Испанский"),
+            ("en", "Английский"), ("ru", "Русский")]
 
 
 def lang_titles() -> list[tuple[str, str]]:

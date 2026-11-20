@@ -1,4 +1,4 @@
-"""RedZ Voice Studio — звуковая панель с выводом прямо в микрофон.
+"""Auraloom — звуковая панель с выводом прямо в микрофон.
 
 Вкладки:
   1. Фразы     — список реплик (пресет + свои), озвучка своим голосом
@@ -57,6 +57,66 @@ PRESET_ES = [
 ]
 
 
+class _StubLabel:
+    """Заглушка tk.Label для нового UI: методы вызываются, но ничего не рисуют."""
+
+    def config(self, **kwargs):
+        pass
+
+    configure = config
+
+    def pack(self, **kwargs):
+        pass
+
+    def pack_forget(self):
+        pass
+
+    def cget(self, key):
+        return ""
+
+    def winfo_exists(self):
+        return False
+
+
+class _StubPanel:
+    """Заглушка LogPanel для нового UI: копит строки в памяти."""
+
+    def __init__(self):
+        self.lines = []
+        self._title = ""
+        self._steps = []
+
+    def log(self, kind, text):
+        self.lines.append((kind, str(text)))
+        del self.lines[:-200]
+
+    def log_text(self):
+        return "\n".join(t for _k, t in self.lines)
+
+    def begin(self, title, steps=None, total=0):
+        self._title = str(title)
+        self._steps = list(steps or [])
+        self.lines.append(("head", self._title))
+
+    def step(self, *a, **k):
+        pass
+
+    def set_stage(self, *a, **k):
+        pass
+
+    def progress_set(self, *a, **k):
+        pass
+
+    def finish(self, *a, **k):
+        pass
+
+    def heartbeat(self):
+        pass
+
+    def stall_warning(self, *a, **k):
+        pass
+
+
 class Studio:
     def __init__(self, use_new_ui: bool = False, root=None) -> None:
         try:
@@ -76,7 +136,7 @@ class Studio:
         else:
             # Старый UI / автономный запуск: Studio владеет своим окном.
             self.root = tk.Tk()
-            self.root.title("RedZ Voice Studio")
+            self.root.title("Auraloom")
             self.root.geometry("1150x950")
             self.root.configure(bg=BG)
             self.root.minsize(940, 640)
@@ -90,6 +150,18 @@ class Studio:
             self.lang = tk.StringVar(value="ru")
         else:
             self.lang = None
+        # В новом UI вкладок нет — создаём заглушки, чтобы методы
+        # _voice_all / _run_job / distribute не падали на отсутствующих
+        # виджетах. Реальный вывод идёт в лог движка.
+        if self.use_new_ui:
+            self.expr_var = None
+            self.phrase_status = _StubLabel()
+            self.task_panel = _StubPanel()
+            self.game_status = _StubLabel()
+            self.mic_status = _StubLabel()
+            self.check_status = _StubLabel()
+            self.voice_status = _StubLabel()
+            self.bridge_info = _StubLabel()
         self.prompt_index = 0
         self.records: dict[int, str] = {}
         self.recorder = core.Recorder()
@@ -391,7 +463,7 @@ class Studio:
     def _header(self) -> None:
         head = tk.Frame(self.root, bg=BG)
         head.pack(fill="x", padx=18, pady=(14, 4))
-        self._lbl(head, "RedZ Voice Studio", 18, ACCENT).pack(side="left")
+        self._lbl(head, "Auraloom", 18, ACCENT).pack(side="left")
         self.engine_lbl = self._lbl(head, "движок: проверяю…", 10, DIM)
         self.engine_lbl.pack(side="right")
         self._lbl(self.root, f"Рабочая папка: {sp.workspace()}", 9, DIM).pack(
@@ -505,9 +577,22 @@ class Studio:
 
     # ---------- язык банка фраз ----------
     def _bank_code(self) -> str:
-        """Код выбранного языка фраз (es по умолчанию)."""
-        value = self.bank_combo.get() if hasattr(self, "bank_combo") else ""
-        return value.split(":")[0].strip() if value else "es"
+        """Код выбранного языка фраз (es по умолчанию).
+
+        В новом UI self.bank_lang — обычная строка (не tk-переменная).
+        В legacy читается из combobox.
+        """
+        try:
+            lang = getattr(self, "bank_lang", None)
+            if isinstance(lang, str) and lang:
+                return lang
+            if lang is not None and hasattr(lang, "get"):
+                value = lang.get()
+                return value.split(":")[0].strip() if value else "es"
+            value = self.bank_combo.get()
+            return value.split(":")[0].strip() if value else "es"
+        except Exception:
+            return "es"
 
     def _phrase_text(self, phrase: dict) -> str:
         """Текст фразы на выбранном языке."""
@@ -577,13 +662,19 @@ class Studio:
         self.phrase_status.config(text=f"Удалено: {removed['text'][:40]}")
 
     def _voice_custom(self) -> None:
-        sel = self.phrase_tree.selection()
+        try:
+            sel = self.phrase_tree.selection()
+        except Exception:
+            sel = ()
         if not sel:
             self.phrase_status.config(text="Выбери фразу в списке")
             return
         idx = self.phrase_tree.index(sel[0])
         phrase = self.phrases[idx]
-        ref = sp.output_paths()["reference"]
+        try:
+            ref = sp.active_reference()
+        except Exception:
+            ref = sp.output_paths()["reference"]
         if not os.path.exists(ref):
             self.phrase_status.config(text="Нет образца голоса — запиши его на вкладке «Голос»")
             return
@@ -591,7 +682,10 @@ class Studio:
         self.phrase_status.config(text=f"Озвучиваю: {phrase['text'][:40]}…")
         # tkinter-переменные читаем ТОЛЬКО в главном потоке: из рабочего
         # потока .get() падает (RuntimeError: main thread is not in main loop)
-        expr = self.expr_var.get()
+        try:
+            expr = self.expr_var.get()
+        except Exception:
+            expr = 2
         lang = self._bank_code()
         text = self._phrase_text(phrase)
 
@@ -612,7 +706,11 @@ class Studio:
                    "Сохранение и раскладка"])
 
     def _voice_all(self) -> None:
-        ref = sp.output_paths()["reference"]
+        # reference активного профиля (или общий, если профиль не выбран)
+        try:
+            ref = sp.active_reference()
+        except Exception:
+            ref = sp.output_paths()["reference"]
         if not os.path.exists(ref):
             self.phrase_status.config(text="Нет образца голоса — запиши его на вкладке «Голос»")
             return
@@ -620,8 +718,12 @@ class Studio:
                    for p in self.phrases]
         self._job_total = len(payload)
         self._job_phrase_ids = [{"id": p["id"]} for p in payload]
-        # tkinter-переменные читаем ТОЛЬКО в главном потоке
-        expr = self.expr_var.get()
+        # tkinter-переменные читаем ТОЛЬКО в главном потоке.
+        # В новом UI expr_var не создаётся — берём безопасное значение.
+        try:
+            expr = self.expr_var.get()
+        except Exception:
+            expr = 2
         lang = self._bank_code()
 
         def _job(cb):
@@ -732,6 +834,18 @@ class Studio:
             self.bridge_info.config(text="мост выключен")
             return
 
+        ok, msg = self._start_bridge()
+        if not ok:
+            self.bridge_info.config(text=msg)
+            return
+        self.bridge_btn.config(text="■ Выключить мост", bg="#1e6f3f", fg="#fff")
+        self.bridge_info.config(text=msg)
+        self._sync_out_combo(self.out_device)
+        self.mic_status.config(text=msg)
+        return
+
+    def _toggle_bridge_legacy_unused(self) -> None:
+        """Старая реализация (не используется) — оставлена как справка."""
         try:
             inputs, outputs = hk.list_devices()
         except Exception as exc:  # noqa: BLE001
@@ -826,6 +940,121 @@ class Studio:
             self.bridge_info.config(
                 text=f"мост включён: речь ← «{mic_name}», выход ← «{render_name}». "
                      f"Лучше надень наушники, иначе услышишь себя.")
+
+    def _start_bridge(self) -> tuple[bool, str]:
+        """Запустить мост микрофон -> выход (без обращения к UI).
+
+        Возвращает (ok, сообщение). Используется и старым UI, и новым.
+        """
+        try:
+            inputs, outputs = hk.list_devices()
+        except Exception as exc:  # noqa: BLE001
+            return False, f"аудиоустройства: {exc}"
+
+        # --- 1. виртуальный кабель (лучший вариант) ---
+        render_idx = render_name = ""
+        capture_name = ""
+        try:
+            import cable as cable_mod
+            devs = cable_mod.cable_devices()
+        except Exception:
+            devs = {}
+        if devs.get("output"):
+            render_idx, render_name = devs["output"]
+            capture_name = devs.get("input", (0, "CABLE Output"))[1]
+
+        # --- 2. запасной путь: Stereo Mix ---
+        if render_idx is None:
+            mix_idx, mix_name = hk.find_stereo_mix(inputs)
+            if mix_idx is None:
+                return False, ("нет ни виртуального кабеля, ни Stereo Mix — "
+                               "установи VB-CABLE отдельно (vb-audio.com)")
+            render_idx, render_name = hk.find_render_for_capture(inputs, outputs)
+            capture_name = mix_name
+            if render_idx is None:
+                return False, "не нашёл устройство вывода под Stereo Mix"
+
+        # микрофон для речи: выбранный пользователем, иначе запомненный,
+        # иначе автоподбор
+        mic_idx = self.in_device
+        mic_name = ""
+        if mic_idx is not None:
+            for i, n in inputs:
+                if i == mic_idx:
+                    mic_name = n
+                    break
+            # если выбран служебный/кабельный — берём реальный
+            if mic_name and any(g in mic_name.lower() for g in
+                                ("стерео микшер", "stereo mix", "первичный драйвер",
+                                 "primary sound capture", "переназначение звуковых",
+                                 "cable output", "vb-audio")):
+                mic_idx = None
+        if mic_idx is None:
+            mic_idx, _ = core.recalled_mic()
+            if mic_idx is not None:
+                for i, n in inputs:
+                    if i == mic_idx:
+                        mic_name = n
+                        break
+        if mic_idx is None:
+            mic_idx, mic_name = core.pick_input_device()
+        if mic_idx is None:
+            return False, "микрофон не найден"
+
+        # устройство, на котором игрок слушает себя (по умолчанию системы)
+        monitor_idx = None
+        try:
+            import sounddevice as sd
+            monitor_idx = sd.default.device[1]
+        except Exception:
+            monitor_idx = None
+
+        # громкость перевода в наушниках (из ползунка живой вкладки)
+        monitor_vol = 0.8
+        # громкость перевода в кабеле (как слышат абоненты в игре)
+        phrase_vol = 1.0
+        # общая громкость всего, что уходит в кабель (и речь, и перевод)
+        out_vol = 1.0
+        live = getattr(self, "live", None)
+        if live is not None:
+            try:
+                monitor_vol = float(live.monitor_vol.get()) / 100.0
+            except Exception:
+                monitor_vol = 0.8
+            try:
+                out_vol = float(live.bridge_out_vol.get()) / 100.0
+            except Exception:
+                out_vol = 1.0
+
+        # Сквозной русский ТОЛЬКО если вывод — подтверждённый виртуальный
+        # кабель. В запасном пути через Stereo Mix output физический —
+        # туда микрофон идти не должен (иначе слышно себя в наушниках).
+        cable_ok = bool(devs.get("output")) and hk.is_virtual_cable(render_name)
+        bridge = mic_bridge.MicBridge(mic_device=mic_idx, render_device=render_idx,
+                                      mic_gain=1.0 if cable_ok else 0.0,
+                                      monitor_device=monitor_idx,
+                                      monitor_gain=monitor_vol,
+                                      phrase_gain=phrase_vol)
+        bridge.out_gain = out_vol
+        if cable_ok:
+            bridge.set_duck(False)
+        try:
+            bridge.start()
+        except Exception as exc:  # noqa: BLE001
+            return False, f"не запустился: {exc}"
+
+        self.bridge = bridge
+        # вкладка «Живой перевод» знает про режим «только испанский» —
+        # применяем его к свежесозданному мосту
+        if live is not None:
+            try:
+                live._apply_mute()
+            except Exception:
+                pass
+        # запоминаем выбранный выход — живой перевод пойдёт туда же
+        self.out_device = render_idx
+        return True, (f"мост включён: речь ← «{mic_name}», выход ← «{render_name}». "
+                      f"В игре/Discord выбери микрофоном «{capture_name}».")
 
     def _check_bridge(self) -> None:
         """Проверить, что мост реально передаёт сигнал."""
@@ -948,9 +1177,10 @@ class Studio:
             dur = q = "-"
             if path and os.path.exists(path):
                 try:
-                    dur = f"{sf.info(path).duration:.1f} c"
-                    a, _ = sf.read(path, dtype="float32")
-                    q = "ок" if core.quality_report(a)["ok"] else "!"
+                    info = sf.info(path)
+                    dur = f"{info.duration:.1f} c"
+                    a, file_sr = sf.read(path, dtype="float32")
+                    q = "ок" if core.quality_report(a, int(file_sr))["ok"] else "!"
                 except Exception:
                     pass
             self.tree.insert("", "end", values=(i + 1, text[:52], dur, q))
@@ -981,13 +1211,17 @@ class Studio:
         if len(raw) == 0:
             self.voice_status.config(text="Звук не получен — нажми «Тест микрофона»")
             return
-        trimmed = core.trim_by_energy(raw)
-        rep = core.quality_report(trimmed)
+        trimmed = core.trim_by_energy(raw, self.recorder.sr)
+        # репорты качества считаются по РЕАЛЬНОЙ частоте потока,
+        # иначе длительность и пороги неверные
+        rep = core.quality_report(trimmed, self.recorder.sr)
         idx = self.prompt_index % len(self._prompts())
         samples = sp.output_paths()["samples"]
         path = os.path.join(samples, f"take_{idx + 1:02d}.wav")
         import soundfile as sf
-        sf.write(path, trimmed, core.SR, subtype="PCM_16")
+        # ВАЖНО: пишем с фактической частотой потока, иначе файл с меткой
+        # 44100 при данных 16000 проигрывается в 2.75 раза быстрее («писк»).
+        sf.write(path, trimmed, self.recorder.sr, subtype="PCM_16")
         self.records[idx] = path
         self._refresh_tree()
         if rep["ok"]:
@@ -1019,8 +1253,11 @@ class Studio:
         self.voice_status.config(text="Записи сброшены")
 
     def _build_ref(self) -> None:
-        res = core.build_reference(list(self.records.values()),
-                                  sp.output_paths()["reference"])
+        try:
+            ref = sp.active_reference()
+        except Exception:
+            ref = sp.output_paths()["reference"]
+        res = core.build_reference(list(self.records.values()), ref)
         if not res["ok"]:
             self.voice_status.config(text="Сначала запиши хотя бы одну подсказку")
             return
@@ -1223,6 +1460,78 @@ class Studio:
                 text="Stereo Mix не найден: без него нужен виртуальный кабель "
                      "(VoiceMeeter / VB-CABLE).")
 
+    def _auto_route(self) -> tuple[bool, str]:
+        """Авто-настройка маршрута под виртуальный кабель или Stereo Mix.
+
+        Работает в обоих интерфейсах (старый и новый) — не трогает виджеты,
+        только состояние Studio и LiveTab. Возвращает (ok, сообщение).
+
+        Порядок:
+          1. выход = «CABLE Input» (если кабель установлен), иначе Stereo Mix;
+          2. микрофон = реальный (без служебных и кабельных);
+          3. мост включается;
+          4. сообщаем, какой микрофон выбрать в игре.
+        """
+        devs = {}
+        try:
+            import cable as cable_mod
+            devs = cable_mod.cable_devices()
+        except Exception:
+            devs = {}
+
+        try:
+            inputs, outputs = hk.list_devices()
+        except Exception as exc:  # noqa: BLE001
+            return False, f"аудиоустройства: {exc}"
+
+        capture_name = ""
+        if devs.get("output"):
+            render_idx, render_name = devs["output"]
+            capture_name = devs.get("input", (0, "CABLE Output"))[1]
+        else:
+            mix_idx, mix_name = hk.find_stereo_mix(inputs)
+            if mix_idx is None:
+                return False, ("нет ни виртуального кабеля, ни Stereo Mix — "
+                               "установи VB-CABLE отдельно (vb-audio.com)")
+            render_idx, render_name = hk.find_render_for_capture(inputs, outputs)
+            capture_name = mix_name
+            if render_idx is None:
+                return False, "не нашёл устройство вывода под Stereo Mix"
+
+        # 1. выход
+        self.out_device = render_idx
+        live = getattr(self, "live", None)
+        if live is not None:
+            try:
+                live.set_out_device(render_idx)
+            except Exception:
+                pass
+
+        # 2. микрофон — реальный
+        skip = ("стерео микшер", "stereo mix", "первичный драйвер",
+                "primary sound capture", "переназначение звуковых",
+                "cable output", "vb-audio")
+        for i, n in inputs:
+            if any(g in n.lower() for g in skip):
+                continue
+            self.in_device = i
+            if live is not None:
+                try:
+                    live.set_mic_device(i)
+                except Exception:
+                    pass
+            break
+
+        # 3. мост
+        if self.bridge is not None and getattr(self.bridge, "running", False):
+            self.bridge.stop()
+            self.bridge = None
+        ok, msg = self._start_bridge()
+        if not ok:
+            return False, msg
+        return True, (f"Готово: играем в «{render_name}». "
+                      f"В Discord/игре выбери микрофоном «{capture_name}».")
+
     def _use_stereo_mix(self) -> None:
         """Режим без установки: играем в устройство, которое захватывает Stereo Mix."""
         mix_idx, mix_name, render_idx, render_name = getattr(
@@ -1351,7 +1660,7 @@ class Studio:
                  f"выбери «{out_name}».")
         # сразу подставляем устройство вывода
         try:
-            for idx, (i, _n) in enumerate(self._outputs):
+            for idx, (i, _n) in enumerate(self._out_list):
                 if i == devs.get("output", (None, ""))[0]:
                     self.out_combo.current(idx)
                     self.out_device = i
@@ -1370,21 +1679,35 @@ class Studio:
             self.in_device = int(value.split(":")[0])
 
     def _route_test(self) -> None:
-        sel = self.phrase_tree.selection()
+        sel = ()
+        try:
+            sel = self.phrase_tree.selection()
+        except Exception:
+            pass
         path = None
         if sel:
-            idx = self.phrase_tree.index(sel[0])
-            path = self._phrase_path(self.phrases[idx]["id"])
+            try:
+                idx = self.phrase_tree.index(sel[0])
+                path = self._phrase_path(self.phrases[idx]["id"])
+            except Exception:
+                path = None
         if not path or not os.path.exists(path):
             path = os.path.join(sp.output_paths()["out_mp3"], "mx_01.mp3")
         if not os.path.exists(path):
             self.mic_status.config(text="Нет озвучки — сначала запиши фразы")
             return
         try:
-            hk.play_file(path, self.out_device, self.vol_var.get())
+            hk.play_file(path, self.out_device, self._volume())
             self.mic_status.config(text="Играю в выбранное устройство — проверь микрофон")
         except Exception as exc:  # noqa: BLE001
             self.mic_status.config(text=f"Ошибка: {exc}")
+
+    def _volume(self) -> float:
+        """Громкость проигрывания: 0..1.5. В новом UI vol_var не создаётся."""
+        try:
+            return float(self.vol_var.get())
+        except Exception:
+            return 1.0
 
     def _measure_route(self) -> None:
         self.mic_status.config(text="Измеряю микрофон…")
@@ -1480,7 +1803,7 @@ class Studio:
                         self.bridge.play_phrase(path)
                     else:
                         try:
-                            hk.play_file(path, self.out_device, self.vol_var.get())
+                            hk.play_file(path, self.out_device, self._volume())
                         except Exception:
                             pass
                 return
@@ -1500,12 +1823,11 @@ class Studio:
 
     def _check_run(self, title: str, job) -> None:
         self.check_status.config(text=title)
-        self.check_log.delete("1.0", "end")
+        self.check_panel.clear()
 
         def _worker():
             def cb(line: str) -> None:
-                self.check_log.insert("end", line + "\n")
-                self.check_log.see("end")
+                self.check_panel.log("dim", line)
             job(cb)
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -1754,9 +2076,16 @@ class Studio:
 
     def _refresh_engine(self) -> None:
         python = sp.engine_python()
-        self.engine_lbl.config(
-            text=("движок: готов" if python else "движок: НЕ УСТАНОВЛЕН"))
-        self.root.after(3000, self._refresh_engine)
+        # в новом UI engine_lbl не создаётся — обновляем только если есть
+        lbl = getattr(self, "engine_lbl", None)
+        if lbl is not None:
+            try:
+                lbl.config(
+                    text=("движок: готов" if python else "движок: НЕ УСТАНОВЛЕН"))
+            except Exception:
+                pass
+        if self.root is not None:
+            self.root.after(3000, self._refresh_engine)
 
     # ---------- управление жизненным циклом движка (новый UI) ----------
 
@@ -1812,6 +2141,13 @@ class Studio:
         live = getattr(self, "live", None)
         if live is None:
             return False, "LiveTab не инициализирован"
+        # Остановить захват входящего звука ПЕРЕД любой проверкой состояния
+        # движка, чтобы захват не оставался активным при аварийном завершении
+        # движка или когда движок ещё не был запущен.
+        try:
+            live.stop_capture()
+        except Exception as exc:  # noqa: BLE001
+            _diag(f"ошибка остановки захвата при остановке движка: {exc}")
         translator = getattr(live, "translator", None)
         if translator is None or not translator.ready and not translator.loading:
             self.engine_state = "STOPPED"
@@ -1820,18 +2156,35 @@ class Studio:
         # Не останавливаем посреди активной операции
         if translator.busy:
             return False, "движок занят операцией, дождитесь завершения"
-        # Остановить захват входящего звука перед движком
+        self.engine_state = "STOPPING"
+        # Гасим всё, что могло бы ещё звучать: очередь воспроизведения в GUI,
+        # поток перевода в мосту, флаги режимов.
         try:
-            live.stop_capture()
+            live._stop_translation()
+        except Exception as exc:  # noqa: BLE001
+            _diag(f"очистка перевода при остановке: {exc}")
+        try:
+            live._hold_on = False
+            live._cont_on = False
+            live._hold_wait_play = False
+            live._swap_busy = False
+            live._swap_wait_play = False
         except Exception:
             pass
-        self.engine_state = "STOPPING"
         try:
             translator.stop()
         except Exception as exc:  # noqa: BLE001
             self.engine_state = "ERROR"
             self.engine_error = str(exc)
             return False, f"ошибка остановки: {exc}"
+        # Даём движку время выгрузить модели (unload) до terminate,
+        # иначе Windows освобождает RAM с задержкой в несколько ГБ.
+        try:
+            import gc
+            for _ in range(3):
+                gc.collect()
+        except Exception:
+            pass
         self.engine_state = "STOPPED"
         self.engine_error = ""
         return True, "движок остановлен, модели выгружены"
@@ -1878,7 +2231,8 @@ class Studio:
         mic_pool = [(i, n) for i, n in inputs
                     if not any(g in n.lower() for g in
                                ("стерео микшер", "stereo mix", "первичный драйвер",
-                                "primary sound capture"))]
+                                "primary sound capture", "переназначение звуковых",
+                                "cable output", "vb-audio"))]
         pool = mic_pool or inputs
         # Выбираем устройства по умолчанию
         try:
@@ -2060,7 +2414,55 @@ def _diag_live() -> int:
     return 0
 
 
+_CURRENT_STUDIO = None
+
+
+def _install_crash_handlers() -> None:
+    """Записывать необработанные исключения в logs/gui_crash.log.
+
+    В собранном EXE нет консоли, поэтому без этого любое падение выглядит
+    как «тихий краш». Пишем и стек, и текущий поток.
+    """
+    import traceback
+
+    def _log_crash(text: str) -> None:
+        try:
+            logs = os.path.join(sp.workspace(), "logs")
+            os.makedirs(logs, exist_ok=True)
+            path = os.path.join(logs, "gui_crash.log")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} "
+                         f"thread={threading.current_thread().name} =====\n")
+                fh.write(text)
+                fh.flush()
+        except Exception:
+            pass
+
+    def _exc_hook(exc_type, exc, tb):
+        _log_crash("".join(traceback.format_exception(exc_type, exc, tb)))
+        # Печатаем и в stderr — на случай запуска из исходников
+        traceback.print_exception(exc_type, exc, tb)
+
+    def _thread_hook(args):
+        _log_crash("".join(traceback.format_exception(
+            args.exc_type, args.exc_value, args.exc_traceback)))
+
+    try:
+        sys.excepthook = _exc_hook
+    except Exception:
+        pass
+    try:
+        threading.excepthook = _thread_hook
+    except Exception:
+        pass
+
+
 def main() -> None:
+    global _CURRENT_STUDIO
+    # Диагностика крашей: любое необработанное исключение (в главном потоке
+    # или в потоке) пишем в logs/gui_crash.log — иначе в EXE без консоли
+    # причина падения теряется безвозвратно.
+    _install_crash_handlers()
     # маркер запуска: в EXE нет консоли, поэтому пишем в файл
     try:
         _marks = os.path.join(sp.workspace(), "logs")
@@ -2119,8 +2521,13 @@ def main() -> None:
         studio.run()
         return
 
-    # Выбор интерфейса: --ui new (по умолчанию) или --ui old
-    ui_mode = "new"
+    # Выбор интерфейса: по умолчанию Qt (если PySide6 есть в сборке),
+    # --ui old — старый Tk, --ui new — новый Tk.
+    try:
+        import PySide6  # noqa: F401
+        ui_mode = "qt"
+    except Exception:
+        ui_mode = "new"
     for arg in sys.argv:
         if arg == "--ui-old":
             ui_mode = "old"
@@ -2128,35 +2535,124 @@ def main() -> None:
         if arg == "--ui-new":
             ui_mode = "new"
             break
+        if arg == "--ui-qt":
+            ui_mode = "qt"
+            break
 
     if ui_mode == "old":
         # Старый интерфейс (6 вкладок через ttk.Notebook)
         Studio().run()
-    else:
-        # Новый интерфейс (3 раздела: Главная / Голоса / Настройки)
-        # MainWindow создаёт ЕДИНЫЙ tk.Tk() — Studio использует его же,
-        # чтобы не было двух окон.
-        import tkinter as _tk
-        from ui.main_window import MainWindow
-        studio = Studio(use_new_ui=True, root=None)
-        app = MainWindow(studio)
-        studio.root = app.root  # общий корень — MainWindow владеет окном
-        # Связываем боковую панель с Studio, чтобы live_tab мог добавлять
-        # записи в историю при получении переводов.
-        studio.sidebar = app.sidebar
-        # Создаём tk-переменные, которые требовали корневого окна
-        studio.lang = tk.StringVar(value="ru")
-        # Создаём placeholder-вкладку для LiveTab (её UI не показывается,
-        # но логика LiveTab — перевод, захват, входящий TTS — работает)
-        studio.tab_live = _tk.Frame(app.root, bg=BG)
-        studio._build_live()
-        # Заполняем списки аудиоустройств для нового UI
-        studio._populate_devices_new_ui()
-        # Перепланируем отложенные вызовы Studio на общий корень
-        app.root.after(120, studio._drain_log)
-        app.root.after(100, studio._poll_live)
-        app.root.after(30, studio._poll_hotkeys)
-        app.run()
+        return
+
+    if ui_mode == "qt":
+        # Qt-интерфейс (PySide6 + QML) — отдельное приложение,
+        # не использует Tkinter.
+        from qtapp.main import main as qt_main
+        sys.exit(qt_main())
+        return
+
+    # Новый интерфейс (3 раздела: Главная / Голоса / Настройки)
+    # MainWindow создаёт ЕДИНЫЙ tk.Tk() — Studio использует его же,
+    # чтобы не было двух окон.
+    import tkinter as _tk
+    from ui.main_window import MainWindow
+    from ui.splash import SplashScreen
+
+    # Заставка с прогрессом: инициализация занимает ~1 с, и без неё
+    # пользователь видит белый экран / «программа не отвечает».
+    splash = SplashScreen()
+
+    splash.step("Подготовка рабочей папки…", 8)
+    studio = Studio(use_new_ui=True, root=None)
+
+    splash.step("Создание окна…", 18)
+    app = MainWindow(studio)
+    studio.root = app.root  # общий корень — MainWindow владеет окном
+
+    splash.step("Подключение интерфейса…", 62)
+    # Связываем боковую панель с Studio, чтобы live_tab мог добавлять
+    # записи в историю при получении переводов.
+    studio.sidebar = app.sidebar
+    # Создаём tk-переменные, которые требовали корневого окна
+    studio.lang = tk.StringVar(value="ru")
+
+    splash.step("Запуск живого перевода…", 78)
+    # Создаём placeholder-вкладку для LiveTab (её UI не показывается,
+    # но логика LiveTab — перевод, захват, входящий TTS — работает)
+    studio.tab_live = _tk.Frame(app.root, bg=BG)
+    studio._build_live()
+
+    splash.step("Поиск аудиоустройств…", 90)
+    # Заполняем списки аудиоустройств для нового UI
+    studio._populate_devices_new_ui()
+
+    splash.step("Финальная проверка…", 97)
+    _CURRENT_STUDIO = studio
+
+    splash.step("Готово", 100)
+    splash.close()
+    # LiveTab опросит устройства через 300 мс — обновляем UI после этого
+    def _refresh_ui_devices():
+        try:
+            app.home._refresh_devices()
+            app.settings._refresh_devices()
+        except Exception:
+            pass
+    app.root.after(600, _refresh_ui_devices)
+    # Перепланируем отложенные вызовы Studio на общий корень
+    app.root.after(120, studio._drain_log)
+    app.root.after(100, studio._poll_live)
+    app.root.after(30, studio._poll_hotkeys)
+    # Хоткеи живого перевода включаем СРАЗУ: пользователь не должен
+    # ничего настраивать — приложение запустилось, значит работает.
+    app.root.after(900, _enable_live_hotkeys)
+    # Виртуальный кабель подключаем автоматически: если он установлен,
+    # мост поднимается сам (в игре сразу выбирают «CABLE Output»).
+    app.root.after(1500, _auto_enable_cable)
+    app.run()
+
+
+def _enable_live_hotkeys() -> None:
+    """Включить глобальные хоткеи живого перевода при старте."""
+    try:
+        studio = _CURRENT_STUDIO
+        live = getattr(studio, "live", None) if studio else None
+        if live is None or getattr(live, "hotkeys_on", False):
+            return
+        live._toggle_hotkeys()
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"автохоткеи не удались: {exc}")
+
+
+def _diag(text: str) -> None:
+    """Записать диагностическую строку (в лог движка, как LiveTab)."""
+    try:
+        logs = os.path.join(sp.workspace(), "logs")
+        os.makedirs(logs, exist_ok=True)
+        with open(os.path.join(logs, "live_engine.log"), "a",
+                  encoding="utf-8") as fh:
+            fh.write(f"[gui] {text}\n")
+    except Exception:
+        pass
+
+
+def _auto_enable_cable() -> None:
+    """Поднять мост на виртуальный кабель, если он установлен.
+
+    Пользователь не должен ничего нажимать: приложение запустилось —
+    значит маршрут уже настроен. Если кабеля нет, тихо выходим.
+    """
+    try:
+        studio = _CURRENT_STUDIO
+        if studio is None:
+            return
+        if getattr(studio, "bridge", None) is not None and \
+                getattr(studio.bridge, "running", False):
+            return
+        ok, msg = studio._auto_route()
+        _diag(f"автокабель: {msg}" if ok else f"автокабель: {msg}")
+    except Exception as exc:  # noqa: BLE001
+        _diag(f"автокабель не удался: {exc}")
 
 
 if __name__ == "__main__":

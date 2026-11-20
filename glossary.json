@@ -1,0 +1,67 @@
+{
+  "entries": [
+    {
+      "src": "Arthur Morgan",
+      "ru": "Артур Морган",
+      "en": "Arthur Morgan",
+      "es": "Arthur Morgan",
+      "it": "Arthur Morgan"
+    },
+    {
+      "src": "Dutch van der Linde",
+      "ru": "Дач ван дер Линде",
+      "en": "Dutch van der Linde",
+      "es": "Dutch van der Linde"
+    },
+    {
+      "src": "Blackwater",
+      "ru": "Блэкуотер",
+      "en": "Blackwater",
+      "es": "Blackwater"
+    },
+    {
+      "src": "Saint Denis",
+      "ru": "Сен-Дени",
+      "en": "Saint Denis",
+      "es": "Saint Denis"
+    },
+    {
+      "src": "Valentine",
+      "ru": "Валентайн",
+      "en": "Valentine",
+      "es": "Valentine"
+    },
+    {
+      "src": "sheriff",
+      "ru": "шериф",
+      "en": "sheriff",
+      "es": "sheriff"
+    },
+    {
+      "src": "bounty",
+      "ru": "награда за голову",
+      "en": "bounty",
+      "es": "recompensa"
+    },
+    {
+      "src": "posse",
+      "ru": "банда",
+      "en": "posse",
+      "es": "banda"
+    },
+    {
+      "src": "burro",
+      "ru": "осёл",
+      "en": "donkey",
+      "es": "burro",
+      "it": "asino"
+    },
+    {
+      "src": "asno",
+      "ru": "осёл",
+      "en": "donkey",
+      "es": "asno",
+      "it": "asino"
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+ "voice": "es_MX-claude-high",
+ "samplerate": 22050,
+ "ref_name": "Carlos",
+ "license": "Apache-2.0 (es_MX-claude-high) + MIT (piper)",
+ "items": [
+  {
+   "index": 0,
+   "file": "prompt_01.wav",
+   "ru": "Привет, меня зовут {name}. Сегодня спокойный день, ничего особенного.",
+   "es": "¡Hola, me llamo Carlos! Hoy es un día tranquilo.",
+   "emotion": "friendly",
+   "emotion_label": "тепло, дружелюбно",
+   "duration": 3.97
+  },
+  {
+   "index": 1,
+   "file": "prompt_02.wav",
+   "ru": "Как круто, всё отлично! У меня тут всё хорошо.",
+   "es": "¡Qué chido, guay! Todo bien por aquí.",
+   "emotion": "friendly",
+   "emotion_label": "тепло, дружелюбно",
+   "duration": 2.85
+  },
+  {
+   "index": 2,
+   "file": "prompt_03.wav",
+   "ru": "Не фигня, брат, давай работать. Пойдём, пора.",
+   "es": "No manches, carnal, vamos a trabajar.",
+   "emotion": "energetic",
+   "emotion_label": "энергично, живо",
+   "duration": 3.06
+  },
+  {
+   "index": 3,
+   "file": "prompt_04.wav",
+   "ru": "Ну всё, почти закончили, осталось немного.",
+   "es": "A huevo, ya casi terminamos.",
+   "emotion": "neutral",
+   "emotion_label": "спокойно, обычно",
+   "duration": 2.19
+  },
+  {
+   "index": 4,
+   "file": "prompt_05.wav",
+   "ru": "Точно, здесь всё круто, всё хорошо.",
+   "es": "Neta que no manches, todo chido aquí.",
+   "emotion": "friendly",
+   "emotion_label": "тепло, дружелюбно",
+   "duration": 2.99
+  },
+  {
+   "index": 5,
+   "file": "prompt_06.wav",
+   "ru": "Чё за фигня? Вот мои деньги, держи.",
+   "es": "¿Qué pedo, guay? Aquí está mi dinero.",
+   "emotion": "angry",
+   "emotion_label": "возмущённо, резко",
+   "duration": 2.85
+  },
+  {
+   "index": 6,
+   "file": "prompt_07.wav",
+   "ru": "Не смейся надо мной, серьёзно, работаем.",
+   "es": "¡Pinche cabrón, no te burles de mí!",
+   "emotion": "angry",
+   "emotion_label": "возмущённо, резко",
+   "duration": 2.36
+  },
+  {
+   "index": 7,
+   "file": "prompt_08.wav",
+   "ru": "Уже круто, я иду, не переживай, всё будет хорошо.",
+   "es": "Ya está chido, aquí voy, no te preocupes.",
+   "emotion": "friendly",
+   "emotion_label": "тепло, дружелюбно",
+   "duration": 3.59
+  },
+  {
+   "index": 8,
+   "file": "prompt_09.wav",
+   "ru": "Ты мой друг, я тебя очень люблю, вот так.",
+   "es": "Chilango de mi corazón, te quiero mucho.",
+   "emotion": "friendly",
+   "emotion_label": "тепло, дружелюбно",
+   "duration": 3.1
+  },
+  {
+   "index": 9,
+   "file": "prompt_10.wav",
+   "ru": "Уже не говори со мной, пожалуйста, спасибо тебе.",
+   "es": "Ya ni me hable, por favor, gracias.",
+   "emotion": "neutral",
+   "emotion_label": "спокойно, обычно",
+   "duration": 2.98
+  },
+  {
+   "index": 10,
+   "file": "prompt_11.wav",
+   "ru": "Подъём, все тут, слушайте внимательно, начинаем.",
+   "es": "¡Arriba, todos aquí, listen bien!",
+   "emotion": "energetic",
+   "emotion_label": "энергично, живо",
+   "duration": 2.8
+  },
+  {
+   "index": 11,
+   "file": "prompt_12.wav",
+   "ru": "Вниз, сойди оттуда, прямо сейчас, быстро.",
+   "es": "Abajo, bájese de ahí, ahora.",
+   "emotion": "energetic",
+   "emotion_label": "энергично, живо",
+   "duration": 2.31
+  },
+  {
+   "index": 12,
+   "file": "prompt_13.wav",
+   "ru": "Не двигайся, руки вверх, оружие брось на пол.",
+   "es": "¡No se mueva, manos arriba, suelte el arma!",
+   "emotion": "angry",
+   "emotion_label": "возмущённо, резко",
+   "duration": 3.61
+  },
+  {
+   "index": 13,
+   "file": "prompt_14.wav",
+   "ru": "Сначала стреляй, я сдаюсь, больше не могу, всё.",
+   "es": "Dispara primero, me rindo, ya no puedo más.",
+   "emotion": "angry",
+   "emotion_label": "возмущённо, резко",
+   "duration": 3.27
+  },
+  {
+   "index": 14,
+   "file": "prompt_15.wav",
+   "ru": "Помогите, спасите, у меня пуля в ноге, быстрее!",
+   "es": "¡Auxilio, socorro por favor, tengo un balazo en la pierna!",
+   "emotion": "angry",
+   "emotion_label": "возмущённо, резко",
+   "duration": 4.17
+  },
+  {
+   "index": 15,
+   "file": "prompt_16.wav",
+   "ru": "Принимаю свою судьбу, не принимаю, точка, мне нравится.",
+   "es": "Acepto mi destino, no acepto, punto, me late.",
+   "emotion": "neutral",
+   "emotion_label": "спокойно, обычно",
+   "duration": 3.38
+  },
+  {
+   "index": 16,
+   "file": "prompt_17.wav",
+   "ru": "Вот твои деньги, не ной, иди к другому, твоя очередь.",
+   "es": "Aquí está tu dinero, no te quejes, vete pal otro, te toca.",
+   "emotion": "angry",
+   "emotion_label": "возмущённо, резко",
+   "duration": 4.33
+  },
+  {
+   "index": 17,
+   "file": "prompt_18.wav",
+   "ru": "Уже хочу есть, кофе с молоком, пожалуйста, спасибо.",
+   "es": "Ya me dio hambre, café con leche, por favor.",
+   "emotion": "friendly",
+   "emotion_label": "тепло, дружелюбно",
+   "duration": 3.91
+  }
+ ]
+}

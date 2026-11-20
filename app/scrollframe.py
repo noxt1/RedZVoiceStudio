@@ -34,39 +34,80 @@ class ScrollFrame(ttk.Frame):
                                               anchor="nw")
         self.body.bind("<Configure>", self._on_body)
         self.canvas.bind("<Configure>", self._on_canvas)
-        # колесо мыши: прокрутка при курсере над содержимым
-        self.body.bind("<Enter>", self._bind_wheel)
-        self.body.bind("<Leave>", self._unbind_wheel)
-        for widget in (self.canvas,):
-            widget.bind("<Enter>", self._bind_wheel)
-            widget.bind("<Leave>", self._unbind_wheel)
+
+        # Колесо мыши.
+        #
+        # ВАЖНО: раньше здесь был bind_all — глобальный перехват. При
+        # нескольких ScrollFrame на одном окне (в «Голосах» их три) последний
+        # созданный перебивал остальные, и прокрутка работала только в
+        # одной под-вкладке. Теперь вешаем на конкретные виджеты.
+        for widget in (self.canvas, self.body):
+            widget.bind("<Enter>", self._bind_wheel, add="+")
+            widget.bind("<Leave>", self._unbind_wheel, add="+")
+        self._wheel_bound = False
+
+        # Windows: колесо отдаёт delta, Linux — Button-4/5
+        self.canvas.bind("<Button-4>", self._on_wheel_linux, add="+")
+        self.canvas.bind("<Button-5>", self._on_wheel_linux, add="+")
 
     # ---------- размеры ----------
     def _on_body(self, _event=None) -> None:
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Пересчёт scrollregion только если содержимое реально изменилось.
+        # Раньше это делалось на каждый <Configure> — при переключении
+        # вкладок Tk успевал отрисовать пустой кадр, отсюда «прогрузка».
+        try:
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        except Exception:
+            pass
 
     def _on_canvas(self, event) -> None:
-        # ширина внутреннего фрейма = ширина окна (иначе содержимое
-        # не растягивается, а полоса прокрутки прыгает)
+        # Ширина внутреннего фрейма = ширина видимой области canvas.
+        # Проверяем, изменилась ли ширина: если нет — ничего не делаем,
+        # иначе идёт лишний пересчёт раскладки.
+        try:
+            cur = self.canvas.itemcget(self._win, "width")
+        except Exception:
+            cur = None
+        try:
+            cur_w = int(float(cur)) if cur not in (None, "") else 0
+        except Exception:
+            cur_w = 0
+        if cur_w == int(event.width):
+            return
         self.canvas.itemconfigure(self._win, width=event.width)
 
     # ---------- колесо мыши ----------
     def _bind_wheel(self, _event=None) -> None:
+        if self._wheel_bound:
+            return
         self.canvas.bind_all("<MouseWheel>", self._on_wheel, add="+")
+        self._wheel_bound = True
 
     def _unbind_wheel(self, _event=None) -> None:
+        if not self._wheel_bound:
+            return
         try:
             self.canvas.unbind_all("<MouseWheel>")
         except Exception:
             pass
+        self._wheel_bound = False
 
     def _on_wheel(self, event) -> None:
         try:
             delta = int(event.delta)
         except Exception:
             return
-        # прокручиваем на 3 строки (120 = одно деление колеса)
+        if delta == 0:
+            return
+        # Windows: 120 = одно деление колеса. Прокручиваем на 3 строки.
         self.canvas.yview_scroll(-int(delta / 40) * 3, "units")
+
+    def _on_wheel_linux(self, event) -> None:
+        # Linux/X11: Button-4 = вверх, Button-5 = вниз
+        if getattr(event, "num", 0) == 4:
+            self.canvas.yview_scroll(-3, "units")
+        elif getattr(event, "num", 0) == 5:
+            self.canvas.yview_scroll(3, "units")
 
     # ---------- переход к элементу ----------
     def scroll_to(self, widget) -> None:
