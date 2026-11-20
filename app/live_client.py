@@ -352,12 +352,15 @@ class LiveTranslator:
         return True
 
     def send_peer_pcm(self, pcm, sr: int = 16000,
-                      partial: bool = False) -> bool:
+                      partial: bool = False, last: bool = True) -> bool:
         """Отдать фрагмент звука игры на разбор речи игроков.
 
         Принимает И bytes int16 (так отдаёт wasapi_loopback), И float32-массив.
         Раньше ожидался только массив: байты падали в np.clip, ошибка
         глушилась, и звук собеседника вообще не доходил до движка.
+
+        last=False — это кусок длинной фразы (транспорт, не реплика):
+        движок скопит куски и распознает/переведёт фразу целиком.
         """
         if not self.ready or pcm is None:
             return False
@@ -373,6 +376,8 @@ class LiveTranslator:
                    "pcm": base64.b64encode(data.tobytes()).decode("ascii")}
             if partial:
                 msg["partial"] = True
+            if not last:
+                msg["last"] = False
             self._send(msg)
             return True
         except Exception as exc:  # noqa: BLE001

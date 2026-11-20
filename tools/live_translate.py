@@ -426,6 +426,15 @@ class Engine:
         # ---------- перехват речи других игроков ----------
         self._peer_q: "queue.Queue" = queue.Queue(maxsize=8)
         self._peer_thread: threading.Thread | None = None
+        # Куски одной длинной фразы собеседника (транспорт из GUI):
+        # склеиваются обратно ДО распознавания, иначе каждые 5 с
+        # переводились как отдельные реплики без контекста.
+        self._peer_parts: list[bytes] = []
+        # Очередь входящего синтеза: голос один (XTTS), поэтому фразы
+        # озвучиваются строго по очереди, а не параллельными потоками.
+        self._incoming_jobs: list[tuple] = []
+        self._incoming_jobs_lock = threading.Lock()
+        self._incoming_worker_on = False
         # Язык чужой речи: "auto" (определяем сами) или es/en/it/ru
         self.peer_lang = "auto"
         # Автоскачивание недостающих пакетов перевода — ВЫКЛЮЧЕНО по умолчанию.
@@ -1424,7 +1433,11 @@ class Engine:
                 except Exception:
                     pass
             with torch.inference_mode():
-                out = model.generate(**batch, max_new_tokens=128,
+                # Лимит длины — от длины входа: 128 токенов хватало только
+                # на короткую реплику, а склеенная (одна фраза из нескольких
+                # кусков) обрезалась на середине — терялся её конец.
+                max_tokens = max(128, min(512, 4 * len(text.split()) + 32))
+                out = model.generate(**batch, max_new_tokens=max_tokens,
                                      num_beams=max(1, int(beam)),
                                      **gen_kwargs)
             text = tok.batch_decode(out, skip_special_tokens=True)[0].strip()
@@ -1625,6 +1638,7 @@ class Engine:
         if code not in allowed:
             code = "auto"
         self.peer_lang = code
+        self._peer_parts = []
         self._bump_gen(f"язык собеседника {code}")
         self._lang_hits.clear()
         if code != "auto":
@@ -1638,16 +1652,19 @@ class Engine:
         return self.peer_lang
 
     def push_peer_pcm(self, pcm_bytes: bytes, sr: int = SR_ASR,
-                      partial: bool = False) -> bool:
+                      partial: bool = False, last: bool = True) -> bool:
         """Отдать фрагмент звука игры на разбор (что говорят игроки).
 
         partial=True — промежуточный срез ещё не законченной реплики:
         он только показывается в интерфейсе и НЕ переводится.
+        last=False — кусок одной фразы: движок скопит куски и обработает
+        фразу целиком (иначе длинная реплика рвётся на куски по 5 с).
         """
         if not pcm_bytes:
             return False
+        item = (pcm_bytes, sr, bool(partial), bool(last))
         try:
-            self._peer_q.put_nowait((pcm_bytes, sr, bool(partial)))
+            self._peer_q.put_nowait(item)
         except queue.Full:
             # Очередь ограничена: лучше потерять промежуточный срез, чем
             # копить задержку. Финальные фрагменты важнее — при перегрузке
@@ -1663,11 +1680,24 @@ class Engine:
                     self._peer_q.put_nowait(old)
                     self.dropped += 1
                     return False
-                self._peer_q.put_nowait((pcm_bytes, sr, False))
+                # выкинули промежуточный срез; недосклеенные куски фразы
+                # после дырки не имеют смысла
+                self._peer_parts = []
+                self._peer_q.put_nowait(item)
             except (queue.Empty, queue.Full):
                 self.dropped += 1
                 return False
         return True
+
+    def _join_peer_parts(self, pcm: bytes, last: bool) -> bytes | None:
+        """Склеить куски одной фразы. None — фраза ещё не закончилась."""
+        if not last:
+            self._peer_parts.append(pcm)
+            return None
+        if self._peer_parts:
+            pcm = b"".join(self._peer_parts + [pcm])
+            self._peer_parts = []
+        return pcm
 
     def _peer_loop(self) -> None:
         """Поток разбора чужой речи: звук -> текст -> перевод на русский."""
@@ -1678,6 +1708,12 @@ class Engine:
                 continue
             pcm, sr = item[0], item[1]
             partial = bool(item[2]) if len(item) > 2 else False
+            last = bool(item[3]) if len(item) > 3 else True
+            if not partial:
+                joined = self._join_peer_parts(pcm, last)
+                if joined is None:
+                    continue
+                pcm = joined
             gen = self.gen
             t0 = time.time()
             try:
@@ -1955,11 +1991,15 @@ class Engine:
             torch.manual_seed(seed)
         except Exception:
             pass
-        chunks = self.tts.inference_stream(
-            spoken, xtts_language(lang or self.lang), self.gpt_latent,
-            self.spk_emb, stream_chunk_size=self.stream_chunk,
-            overlap_wav_len=2048, **params)
-        parts = [c.detach().cpu().numpy() for c in chunks]
+        # XTTS — одна модель в памяти на оба направления. Без блокировки
+        # входящая озвучка (свой поток) и исходящая лезли в неё
+        # одновременно: часть фраз озвучивалась битым звуком или молча.
+        with self.lock:
+            chunks = self.tts.inference_stream(
+                spoken, xtts_language(lang or self.lang), self.gpt_latent,
+                self.spk_emb, stream_chunk_size=self.stream_chunk,
+                overlap_wav_len=2048, **params)
+            parts = [c.detach().cpu().numpy() for c in chunks]
         if not parts:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(parts).astype(np.float32)
@@ -2085,11 +2125,15 @@ class Engine:
             self._seed_counter = getattr(self, "_seed_counter", 0) + 1
             seed = (abs(hash(spoken)) % 100000) + self._seed_counter * 7919
             torch.manual_seed(seed)
-            for c in self.tts.inference_stream(
-                    spoken, xtts_language(tts_code), self.gpt_latent,
-                    self.spk_emb, stream_chunk_size=self.stream_chunk,
-                    overlap_wav_len=2048, **params):
-                self._emit_chunk(c.detach().cpu().numpy(), seq)
+            # Блокировка на всё время синтеза: XTTS не является
+            # потокобезопасным, а входящая (русская) озвучка идёт своим
+            # потоком. Без неё часть фраз оставалась без звука.
+            with self.lock:
+                for c in self.tts.inference_stream(
+                        spoken, xtts_language(tts_code), self.gpt_latent,
+                        self.spk_emb, stream_chunk_size=self.stream_chunk,
+                        overlap_wav_len=2048, **params):
+                    self._emit_chunk(c.detach().cpu().numpy(), seq)
         except Exception as exc:
             log(f"[engine] синтез не удался: {type(exc).__name__}: {exc}")
         emit({"event": "done", "seq": seq,
@@ -2109,13 +2153,38 @@ class Engine:
         if not text.strip():
             emit({"event": "incoming_done", "seq": seq, "ms": 0})
             return
-        # Запускаем синтез в отдельном потоке, чтобы не блокировать
-        # главный цикл IPC и обработку исходящего перевода.
-        threading.Thread(
-            target=self._synthesize_incoming,
-            args=(text, seq, voice_profile),
-            daemon=True,
-        ).start()
+        # Синтез в отдельном потоке (не блокирует IPC), но СТРОГО по
+        # очереди: голос один. Раньше на каждую фразу стартовал свой
+        # поток, фраза N+1 запускалась, пока N ещё звучала, и GUI
+        # выбрасывал её оставшиеся чанки как «устаревшие» — в истории
+        # текст есть, а озвучки нет.
+        with self._incoming_jobs_lock:
+            if len(self._incoming_jobs) >= 3:
+                # Отстали больше чем на три фразы — склеиваем последние
+                # две: ничего не теряем и меньше отстаём.
+                prev_text, prev_seq, prev_prof = self._incoming_jobs.pop()
+                text = prev_text + " " + text.strip()
+                seq = prev_seq
+                voice_profile = prev_prof or voice_profile
+            self._incoming_jobs.append((text, seq, voice_profile))
+            if self._incoming_worker_on:
+                return
+            self._incoming_worker_on = True
+        threading.Thread(target=self._incoming_worker, daemon=True).start()
+
+    def _incoming_worker(self) -> None:
+        """Озвучивать входящие фразы по одной, в порядке поступления."""
+        while True:
+            with self._incoming_jobs_lock:
+                if not self._incoming_jobs:
+                    self._incoming_worker_on = False
+                    return
+                text, seq, voice_profile = self._incoming_jobs.pop(0)
+            try:
+                self._synthesize_incoming(text, seq, voice_profile)
+            except Exception as exc:  # noqa: BLE001
+                log(f"[engine] входящая озвучка: {type(exc).__name__}: {exc}")
+                emit({"event": "incoming_done", "seq": seq, "ms": 0})
 
     def _synthesize_incoming(self, text: str, seq: int,
                              voice_profile: str | None = None) -> None:

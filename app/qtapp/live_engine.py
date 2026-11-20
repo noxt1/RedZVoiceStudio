@@ -44,10 +44,17 @@ NOISE_HISTORY = 600      # 30 с блоков по 50 мс: 10-й процент
 HOLD_MAX_WAIT = 20.0
 
 # Сегментация звука собеседника (системный звук через loopback).
-PEER_SILENCE_END = 0.80
+# 0.8 с — «речь закончилась», но реплику в движок ещё не отдаём: на
+# границе придаточного пауза часто 1 с, и раньше каждое придаточное
+# уходило отдельной репликой. Перевод такого огрызка теряет контекст
+# («переводит первую, потом вторую, третью часть»). Отдаём после
+# PEER_JOIN_END тишины: если человек продолжает мысль — остаётся одна фраза.
+PEER_JOIN_END = 1.30
 PEER_MIN_SPEECH = 0.45
 PEER_MAX_SEG = 18.0
 # Куски отправки звука собеседника в движок (сек).
+# Это только транспорт (одна огромная строка JSON терялась на Windows):
+# части склеиваются в движке обратно в одну фразу.
 PEER_SEND_CHUNK = 5.0
 
 
@@ -161,6 +168,11 @@ class LiveEngine(QObject):
         self._incoming_stream = None
         self._incoming_playing = False
         self._incoming_lock = threading.Lock()
+        # Номер, ниже которого чанки входящей озвучки уже не нужны
+        # (остановка/выключение). Раньше сравнивалось на равенство с
+        # последней репликой, и звук предыдущего куска выбрасывался, как
+        # только начиналась следующая: текст в истории есть, озвучки нет.
+        self._incoming_floor = 0
         # Устройство для входящего перевода (наушники). None = системное по
         # умолчанию; в кабель (virtual mic) входящий звук не идёт никогда.
         self._monitor_idx: int | None = None
@@ -1575,7 +1587,7 @@ class LiveEngine(QObject):
             self._peer_partial_acc = self._peer_acc
             self._peer_partial_t = _t.time()
             self._send_peer_partial()
-        if self._peer_silence >= PEER_SILENCE_END and self._peer_speech:
+        if self._peer_silence >= PEER_JOIN_END and self._peer_speech:
             self._flush_peer_segment()
         elif len(self._peer_buf) * block_sec >= PEER_MAX_SEG:
             self._flush_peer_segment()
@@ -1608,15 +1620,25 @@ class LiveEngine(QObject):
         if seg_rms < floor * 2.0:
             return
         # Режем на небольшие куски: одна огромная JSON-строка (18 с PCM)
-        # терялась при записи в stdin движка на Windows.
+        # терялась при записи в stdin движка на Windows. Куски — это
+        # ТОЛЬКО транспорт: флаг last говорит движку склеить их обратно,
+        # иначе каждые 5 с переводились как отдельные реплики без контекста.
         step = max(1, int(PEER_SEND_CHUNK * sr))
-        sent = 0
+        min_part = int(0.2 * sr)
+        parts: list[np.ndarray] = []
         for i in range(0, len(audio), step):
             part = audio[i:i + step]
-            if len(part) < int(0.2 * sr):
+            if len(part) < min_part:
+                if parts:
+                    # короткий хвост приклеиваем к предыдущему куску:
+                    # отдельный кусок < 0,2 с движок всё равно отбросил бы
+                    parts[-1] = np.concatenate([parts[-1], part])
                 continue
+            parts.append(part)
+        sent = 0
+        for k, part in enumerate(parts):
             pcm = (np.clip(part, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-            if not tr.send_peer_pcm(pcm, sr):
+            if not tr.send_peer_pcm(pcm, sr, last=(k == len(parts) - 1)):
                 break
             sent += 1
         err = getattr(tr, "last_send_error", "")
@@ -1793,6 +1815,8 @@ class LiveEngine(QObject):
                 break
 
     def _clear_incoming(self) -> None:
+        # всё, что уже в пути к наушникам от прошлых реплик, — не играем
+        self._incoming_floor = self._incoming_seq + 1
         with self._incoming_lock:
             self._incoming_q.clear()
         try:
@@ -1818,9 +1842,11 @@ class LiveEngine(QObject):
         if tr is None or not getattr(tr, "ready", False):
             self.errorMessage.emit("движок не запущен — сначала «Запустить модель»")
             return
-        self._replay_seq += 1
+        # Тот же счётчик, что у входящих реплик: иначе чанки повтора
+        # отбрасывались как «устаревшие» (номер меньше текущего).
+        self._incoming_seq += 1
         try:
-            ok = tr.incoming_speak(text, self._replay_seq)
+            ok = tr.incoming_speak(text, self._incoming_seq)
         except Exception as exc:
             self.errorMessage.emit(f"повтор не удался: {exc}")
             return
@@ -1868,7 +1894,9 @@ class LiveEngine(QObject):
                 seq = int(data.get("seq", self._incoming_seq))
             except Exception:
                 seq = self._incoming_seq
-            if seq != self._incoming_seq:
+            if seq < self._incoming_floor:
+                # отброшен только звук, отменённый остановкой/выключением;
+                # чанки предыдущей реплики продолжают звучать целиком
                 self._cancelled += 1
                 return
             try:

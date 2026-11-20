@@ -106,7 +106,7 @@ class PeerSegmentationTests(unittest.TestCase):
         self.sent = []
         translator = mock.Mock()
         translator.ready = True
-        translator.send_peer_pcm = lambda pcm, sr: (
+        translator.send_peer_pcm = lambda pcm, sr, last=True: (
             self.sent.append((len(pcm), sr)) or True)
         translator.last_send_error = ""
         self.live._translator = translator
@@ -126,7 +126,8 @@ class PeerSegmentationTests(unittest.TestCase):
 
     def test_speech_segment_goes_to_engine(self):
         self._feed(1.5)
-        self.live._on_loopback_pcm(b"\x00\x00" * int(48000 * 0.9), 48000)
+        # PEER_JOIN_END: реплика отдаётся только после 1.3 с тишины
+        self.live._on_loopback_pcm(b"\x00\x00" * int(48000 * 1.4), 48000)
         self.assertTrue(self.sent)
         self.assertGreater(self.sent[0][0], 0)
 
@@ -137,7 +138,7 @@ class PeerSegmentationTests(unittest.TestCase):
     def test_echo_gate_blocks_capture(self):
         self.live._incoming_active = True
         self._feed(1.5)
-        self.live._on_loopback_pcm(b"\x00\x00" * int(48000 * 0.9), 48000)
+        self.live._on_loopback_pcm(b"\x00\x00" * int(48000 * 1.4), 48000)
         self.assertFalse(self.sent)
 
     def test_long_phrase_is_split(self):

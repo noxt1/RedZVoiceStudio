@@ -210,17 +210,35 @@ class AppPipelineTests(unittest.TestCase):
         self.assertEqual(self.live.lastMetrics["tts_first_ms"], 120)
         self.assertEqual(self.live.lastMetrics["dropped"], 3)
 
-    def test_stale_incoming_chunk_dropped(self):
-        got = []
-        self.live._emit_incoming_audio = lambda pcm: got.append(pcm)
-        self.live._incoming_seq = 5
+    @staticmethod
+    def _chunk_msg(seq: int) -> dict:
         import base64
 
         import numpy as np
 
         pcm = (np.zeros(100, dtype=np.int16)).tobytes()
-        msg = {"seq": 4, "pcm": base64.b64encode(pcm).decode("ascii")}
-        self.live._on_event("incoming_chunk", msg)
+        return {"seq": seq, "pcm": base64.b64encode(pcm).decode("ascii")}
+
+    def test_previous_phrase_chunk_still_plays(self):
+        """Новая фраза не отменяет звук предыдущей.
+
+        Раньше номер сравнивался на равенство с последней запрошенной
+        фразой, и как только начиналась следующая, остаток предыдущей
+        выбрасывался: в истории текст есть, а озвучки нет.
+        """
+        got = []
+        self.live._emit_incoming_audio = lambda pcm: got.append(pcm)
+        self.live._incoming_seq = 5
+        self.live._on_event("incoming_chunk", self._chunk_msg(4))
+        self.assertEqual(len(got), 1)
+
+    def test_cancelled_chunk_dropped(self):
+        """А после остановки/выключения звук прошлых фраз не играет."""
+        got = []
+        self.live._emit_incoming_audio = lambda pcm: got.append(pcm)
+        self.live._incoming_seq = 5
+        self.live._clear_incoming()
+        self.live._on_event("incoming_chunk", self._chunk_msg(5))
         self.assertEqual(got, [])
         self.assertGreaterEqual(self.live._cancelled, 1)
 
