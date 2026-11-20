@@ -2,8 +2,8 @@
 
 **Дата:** 2026-11-20
 **Коммит с исправлением:** `cd24caa`
-**Коммит с этим отчётом:** указан в `Documentation/CHANGELOG.md` и в истории git
-(отдельный коммит `docs(investigations): …`).
+**Коммит с этим отчётом:** `1864fc2` (история документа — `git log --
+Documentation/INVESTIGATIONS/MICROPHONE_INPUT_QUALITY.md`).
 
 ## 1. Исходная проблема
 
@@ -243,7 +243,7 @@ chrF перевода 0,447 (было 0,457 при WER 0,154 до правки �
 
 | Проверка | До | После |
 |---|---|---|
-| `python -m unittest discover -s tests` | 164 OK | **175 OK** (11 новых) |
+| `python -m unittest discover -s tests` | 164 OK | **176 OK** (12 новых) |
 | `tools/live_path_check.py` | 5/5 PASS | 5/5 PASS |
 | `python -m compileall app tools tests` | OK | OK |
 | Фраз дошло до ASR, обычная громкость | 16/18 | 18/18 |
@@ -283,8 +283,8 @@ chrF перевода 0,447 (было 0,457 при WER 0,154 до правки �
 
 ## 13. SHA коммита с документацией
 
-Отдельный коммит `docs(investigations): отчёт о качестве захвата микрофона`
-(см. `git log -- Documentation/INVESTIGATIONS/MICROPHONE_INPUT_QUALITY.md`).
+`1864fc2` — `docs(investigations): отчёт о качестве захвата микрофона`
+(в него же вошёл тест PTT-режима без вводной тишины).
 
 ## Как воспроизвести
 
