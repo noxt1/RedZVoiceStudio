@@ -1086,7 +1086,12 @@ class LiveEngine(QObject):
                     sr: int | None = None, dropped: bool = False) -> None:
         """Записать уровни этапов в logs/audio_diag.log (если включено)."""
         try:
-            import audio_diag  # noqa: PLC0415 — только при включённой диагностике
+            # Пакетный импорт, иначе в собранном EXE модуль не попадал в сборку
+            # (`missing module named audio_diag`) и диагностика молчала.
+            try:
+                from qtapp import audio_diag  # noqa: PLC0415
+            except ImportError:
+                import audio_diag  # noqa: PLC0415
             if not audio_diag.DiagLog.enabled():
                 return
             if self._diag is None:

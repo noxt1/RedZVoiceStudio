@@ -112,6 +112,7 @@ hiddenimports = [
     "qtapp.main",
     "qtapp.app_state",
     "qtapp.live_engine",
+    "qtapp.audio_diag",
     "qtapp.voice_controller",
     "qtapp.models",
     "PySide6.QtCore",
