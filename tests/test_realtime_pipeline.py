@@ -159,6 +159,58 @@ class PeerLoopTests(unittest.TestCase):
                 self.assertIn(key, msg)
 
 
+class PeerNoiseTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = live_translate.Engine()
+        self.engine.peer_lang = "es"
+        self.engine.peer_lang_confirmed = "es"
+
+        class _Boom:
+            def transcribe(self, *a, **kw):
+                raise AssertionError("шум не должен доходить до Whisper")
+
+        self.engine.asr = _Boom()
+
+    def test_flat_noise_is_not_sent_to_asr(self):
+        """Ровный шум/тишина не должны становиться «речью»: раньше пиковая
+        нормализация делала из них фразу, и она уходила в перевод и озвучку."""
+        import numpy as np
+        for pcm in (b"\x00\x00" * 16000,
+                    (np.full(16000, 300, dtype=np.int16)).tobytes()):
+            text, _lang = self.engine.transcribe_peer(pcm, 16000)
+            self.assertEqual(text, "")
+            self.assertEqual(self.engine._asr_skip, "no_speech")
+
+
+class HallucinationFilterTests(unittest.TestCase):
+    def test_whisper_repeat_loop_is_dropped(self):
+        """Реальный случай: на обрывке записи Whisper ушёл в цикл, и этот
+        текст ушёл в перевод («Значит, я пойду к тебе...»)."""
+        text = ("So I'm going to see you soon, but I'm going to see you "
+                "all the seasons and you're all the seasons and you're "
+                "all the seasons again.")
+        self.assertTrue(live_translate.is_hallucination(text))
+
+    def test_russian_repeat_loop_is_dropped(self):
+        text = ("Значит, я пойду к тебе, но я пойду к тебе, чтобы увидеть "
+                "тебя и тебя, и ты пойдёшь со мной, и ты пойдёшь со мной, "
+                "и ты пойдёшь со мной, и мы пойдём домой, и будем спать")
+        self.assertTrue(live_translate.is_hallucination(text))
+
+    def test_normal_speech_with_a_repeat_is_kept(self):
+        """Живая речь не должна отбрасываться: короткие повторы — норма."""
+        for text in (
+            "Слушай, я не знаю, я не знаю, честно",
+            "Сегодня утром я вышел на улицу и увидел, как Маршал "
+            "занимается сексом с ослом.",
+            "Entonces voy a ir a verte, pero no sé si voy a ir",
+            "Боже мой, Боже мой, Боже мой, Боже мой!",
+            "Пошёл нахуй, пошёл нахуй, пошёл нахуй.",
+            "Vete a la mierda, vete a la mierda, vete a la mierda.",
+        ):
+            self.assertFalse(live_translate.is_hallucination(text), text)
+
+
 class QueueTests(unittest.TestCase):
     def test_peer_queue_is_bounded(self):
         engine = live_translate.Engine()

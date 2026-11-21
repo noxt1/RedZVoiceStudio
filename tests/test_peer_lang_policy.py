@@ -96,10 +96,15 @@ class _FakeAsr:
 
 
 def _pcm(seconds: float = 2.0) -> bytes:
+    """Структура как у речи: громкие слоги и тихие паузы (не ровный шум)."""
     import array
+    import math
     n = int(seconds * lt.SR_ASR)
-    samples = array.array("h", [12000 if i % 2 else -12000
-                               for i in range(n)])
+    block = max(1, int(lt.SR_ASR * 0.2))
+    samples = array.array("h", (
+        int((12000 if (i // block) % 2 else 800)
+            * math.sin(2 * math.pi * 180 * i / lt.SR_ASR))
+        for i in range(n)))
     return samples.tobytes()
 
 

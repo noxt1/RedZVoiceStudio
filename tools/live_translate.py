@@ -373,11 +373,38 @@ def _cyrillic_share(text: str) -> float:
     return cyr / len(letters)
 
 
+def _repeated_ngram(text: str, n_min: int = 3, n_max: int = 4,
+                    limit: int = 3, min_words: int = 10) -> bool:
+    """Есть ли в ДЛИННОМ тексте n-грамма, повторённая `limit` раз.
+
+    На шуме/обрывках записи Whisper уходит в цикл и выдаёт одно и то же
+    («...you're all the seasons and you're all the seasons and you're all
+    the seasons»). Такой текст переводился дословно, и собеседник слышал
+    бессмыслицу, поэтому его надо отбрасывать как галлюцинацию.
+
+    Фразы из одного и того же повтора («Боже мой, Боже мой, Боже мой!»,
+    «Vete a la mierda» три раза) — живая речь, а не цикл: у цикла повтор
+    занимает только часть длинной фразы, поэтому требуем ещё и «хвост».
+    """
+    words = text.split()
+    if len(words) < max(min_words, limit * n_min):
+        return False
+    for n in range(n_min, n_max + 1):
+        seen: dict = {}
+        for i in range(len(words) - n + 1):
+            gram = tuple(words[i:i + n])
+            seen[gram] = seen.get(gram, 0) + 1
+            if seen[gram] >= limit and seen[gram] * n <= 0.6 * len(words):
+                return True
+    return False
+
+
 def is_hallucination(text: str) -> bool:
     """Похоже ли это на галлюцинацию Whisper (текст из тишины/шума)?
 
     Whisper на шуме и тишине выдаёт заготовки: «Субтитры сделал…»,
-    «Продолжение следует…», «Спасибо за просмотр» и т.п. Их озвучивать нельзя.
+    «Продолжение следует…», «Спасибо за просмотр» и т.п., а на обрывках
+    речи — зацикленные повторы. Их озвучивать нельзя.
     """
     if not text:
         return True
@@ -391,7 +418,9 @@ def is_hallucination(text: str) -> bool:
         "постарше", "мне нужно", "ты не знаешь", "я не знаю, что это",
         "пожалуйста, послушайте", "кхм",
     )
-    return any(m in low for m in markers)
+    if any(m in low for m in markers):
+        return True
+    return _repeated_ngram(low)
 
 
 _emit_lock = threading.Lock()
@@ -2024,7 +2053,23 @@ class Engine:
             from math import gcd
             from scipy.signal import resample_poly
             g = gcd(int(sr), SR_ASR)
-            audio = resample_poly(audio, SR_ASR // g, int(sr) // g).astype(np.float32)
+            audio = resample_poly(
+                audio, SR_ASR // g, int(sr) // g).astype(np.float32)
+        # Та же проверка, что и для своей речи: тишина/ровный шум — не речь.
+        # Без неё пиковая нормализация ниже делает из шума «речь», и Whisper
+        # на нём сочиняет целые фразы (в живом тесте так появился перевод
+        # «Значит, я пойду к тебе…», которого никто не говорил).
+        if audio.size:
+            win = int(SR_ASR * 0.02)
+            n = audio.size // win
+            if n >= 4:
+                fr = audio[:n * win].reshape(n, win).astype(np.float64)
+                fr = np.sqrt(np.mean(np.square(fr), axis=1))
+                quiet = float(np.percentile(fr, 20))
+                loud = float(np.percentile(fr, 90))
+                if loud <= max(quiet * 2.0, 1e-7):
+                    self._asr_skip = "no_speech"
+                    return "", self.peer_lang
         peak = float(np.abs(audio).max()) if audio.size else 0.0
         if peak > 1e-4:
             audio = audio / peak * 0.7
