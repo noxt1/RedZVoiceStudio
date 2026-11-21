@@ -2660,8 +2660,26 @@ class Engine:
         Текст добавляется в last_spoken, чтобы перехват речи игроков
         не захватил свой синтезированный перевод (защита от аудиопетель).
         """
+        # Тон и живость — как у исходящей речи. Раньше входящий перевод
+        # синтезировался с ЖЁСТКО ЗАДАННЫМИ параметрами (temp=0.78, speed=0.97)
+        # и без пунктуации по тону: ползунок «живость» на него не влиял
+        # вообще, а злая реплика читалась ровно, как нейтральная. Отсюда
+        # жалоба «слышно, что синтез».
+        tone, params = _tone_params(text, "", self.liveliness)
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import voice_post
+            import voice_tone
+            spoken = voice_post.add_pauses(
+                voice_tone.apply_punctuation(text, tone))
+        except Exception:
+            spoken = text
+        if spoken != text:
+            log(f"[engine] входящая пунктуация: {text!r} -> {spoken!r}")
+        log(f"[engine] входящий тон: {tone}, живость: {self.liveliness} -> "
+            f"temp={params['temperature']}, speed={params['speed']}")
         # Запоминаем, что синтезируем — для защиты от аудиопетель
-        self.last_spoken.append((text, time.time()))
+        self.last_spoken.append((spoken, time.time()))
         del self.last_spoken[:-5]
         t0 = time.time()
         gen = self.gen
@@ -2673,19 +2691,15 @@ class Engine:
             # одинаково монотонно («неживо»). Берём seed от хэша текста и
             # счётчика — одинаковые фразы не повторяются точь-в-точь.
             self._seed_counter = getattr(self, "_seed_counter", 0) + 1
-            seed = (abs(hash(text)) % 100000) + self._seed_counter * 7919
+            seed = (abs(hash(spoken)) % 100000) + self._seed_counter * 7919
             torch.manual_seed(seed)
-            # Параметры для живости: чуть выше temperature (0.78) даёт
-            # интонационное разнообразие, но не «кашу» (потолок 0.82).
             # Входящая озвучка — низкий приоритет: если пользователь начал
             # говорить, исходящий синтез пройдёт раньше следующей фразы.
             with self.lock.hold(_TtsGate.PRIO_IN):
                 for c in self.tts.inference_stream(
-                        text, "ru", self.gpt_latent, self.spk_emb,
+                        spoken, "ru", self.gpt_latent, self.spk_emb,
                         stream_chunk_size=self.stream_chunk,
-                        temperature=0.78, top_p=0.87, top_k=52,
-                        speed=0.97, repetition_penalty=10.0,
-                        overlap_wav_len=2048):
+                        overlap_wav_len=2048, **params):
                     if gen != self.gen:
                         # язык/режим сменились — старый перевод не озвучиваем
                         self.cancelled += 1
