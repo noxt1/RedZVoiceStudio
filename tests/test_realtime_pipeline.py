@@ -197,6 +197,13 @@ class HallucinationFilterTests(unittest.TestCase):
                 "и ты пойдёшь со мной, и мы пойдём домой, и будем спать")
         self.assertTrue(live_translate.is_hallucination(text))
 
+    def test_repeat_loop_with_punctuation_is_dropped(self):
+        """Знаки препинания не должны прятать цикл: «caballo?» != «caballo»."""
+        text = ("Oye, ¿dónde está el caballo? Creo que lo dejé cerca del río. "
+                "¿Dónde está el caballo? Creo que lo dejé cerca del río. "
+                "¿Dónde está el caballo? Creo que lo dejé cerca del río.")
+        self.assertTrue(live_translate.is_hallucination(text))
+
     def test_normal_speech_with_a_repeat_is_kept(self):
         """Живая речь не должна отбрасываться: короткие повторы — норма."""
         for text in (

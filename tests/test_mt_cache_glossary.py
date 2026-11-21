@@ -14,26 +14,69 @@ import glossary
 import live_translate
 
 
-class AsrHotwordsTest(unittest.TestCase):
-    """hotwords для Whisper: только имена, без строчных терминов."""
+class AsrNameFixTest(unittest.TestCase):
+    """Ослышки имён правятся текстом, а не подсказкой Whisper.
 
-    def _engine(self, entries):
+    Замер (out/probe_hw_halluc.py): hotwords из глоссария на не-речи
+    (белый шум, розовый шум, цифровая тишина) давали 3 из 3 «de Linde,
+    Blackwater, Saint Denis, Valentine…» — тот самый бред из фона; без
+    подсказки — 0 из 3. Подсказка убрана, «Mars al» правится точечно.
+    """
+
+    def test_mars_al(self) -> None:
+        self.assertEqual(
+            live_translate.fix_asr_names("Ayer vi a Mars al en la calle."),
+            "Ayer vi a Marshall en la calle.")
+
+    def test_marsal_case_and_punctuation(self) -> None:
+        self.assertEqual(live_translate.fix_asr_names("MARSAL, ven aquí"),
+                         "Marshall, ven aquí")
+
+    def test_other_text_untouched(self) -> None:
+        text = "No te preocupes, ya voy para allá en un minuto."
+        self.assertEqual(live_translate.fix_asr_names(text), text)
+
+    def test_no_hotwords_passed_to_asr(self) -> None:
         eng = object.__new__(live_translate.Engine)
         live_translate.Engine._ensure_state(eng)
-        eng.glossary = glossary.Glossary(entries) if entries is not None else False
-        return eng
+        eng.glossary = glossary.Glossary([{"src": "Marshall", "ru": "Маршал"}])
+        eng.peer_lang = "es"
+        eng.peer_lang_confirmed = "es"
+        eng._asr_skip = ""
+        eng.beam_size = 1
+        seen = {}
 
-    def test_names_only(self) -> None:
-        eng = self._engine([
-            {"src": "Marshall", "ru": "Маршал"},
-            {"src": "Arthur Morgan", "ru": "Артур Морган"},
-            {"src": "burro", "ru": "осёл"},
-        ])
-        # глоссарий сортирует термины по длине: сначала «Arthur Morgan»
-        self.assertEqual(eng._asr_hotwords(), "Arthur Morgan, Marshall")
+        class _Seg:
+            text = "Hola, Mars al."
+            no_speech_prob = 0.0
+            avg_logprob = -0.2
 
-    def test_no_glossary(self) -> None:
-        self.assertIsNone(self._engine(None)._asr_hotwords())
+        class _Info:
+            language = "es"
+            language_probability = 0.9
+
+        class _Asr:
+            def transcribe(self, audio, **kwargs):
+                seen.update(kwargs)
+                return [_Seg()], _Info()
+
+        eng.asr = _Asr()
+        text, lang = eng.transcribe_peer(self._pcm(), live_translate.SR_ASR)
+        self.assertNotIn("hotwords", seen)
+        self.assertEqual(lang, "es")
+        self.assertEqual(text, "Hola, Marshall.")
+
+    @staticmethod
+    def _pcm(seconds: float = 2.0) -> bytes:
+        import array
+        import math
+        n = int(seconds * live_translate.SR_ASR)
+        block = max(1, int(live_translate.SR_ASR * 0.2))
+        samples = array.array("h", (
+            int((12000 if (i // block) % 2 else 800)
+                * math.sin(2 * math.pi * 180 * i / live_translate.SR_ASR))
+            for i in range(n)))
+        return samples.tobytes()
 
 
 class GlossaryTest(unittest.TestCase):

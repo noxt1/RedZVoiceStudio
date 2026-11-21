@@ -364,6 +364,10 @@ def _tone_params(text: str, ru: str = "", liveliness: int = 2) -> tuple[str, dic
                            "speed": 1.02, "repetition_penalty": 5.0}
 
 
+# Знаки, которые снимаем с краёв слова при сравнении повторов и имён.
+_PUNCT = ".,!?;:¿¡\"'()"
+
+
 def _cyrillic_share(text: str) -> float:
     """Доля кириллицы среди букв (для проверки «это правда русский?»)."""
     letters = [ch for ch in text if ch.isalpha()]
@@ -386,7 +390,10 @@ def _repeated_ngram(text: str, n_min: int = 3, n_max: int = 4,
     «Vete a la mierda» три раза) — живая речь, а не цикл: у цикла повтор
     занимает только часть длинной фразы, поэтому требуем ещё и «хвост».
     """
-    words = text.split()
+    # Пунктуация не должна различать слова: «caballo?» и «caballo» —
+    # один и тот же повтор, иначе цикл с разными знаками не ловится.
+    words = [w.strip(_PUNCT) for w in text.split()]
+    words = [w for w in words if w]
     if len(words) < max(min_words, limit * n_min):
         return False
     for n in range(n_min, n_max + 1):
@@ -397,6 +404,49 @@ def _repeated_ngram(text: str, n_min: int = 3, n_max: int = 4,
             if seen[gram] >= limit and seen[gram] * n <= 0.6 * len(words):
                 return True
     return False
+
+
+# Известные ослышки имён в распознанной речи. Правим ТЕКСТ, а не
+# подсказку декодеру: замер (out/probe_hw_halluc.py) показал, что hotwords
+# из глоссария на не-речи (белый шум, розовый шум, цифровая тишина) дают
+# 3 из 3 «de Linde, Blackwater, Saint Denis, Valentine…» — ровно тот бред,
+# который владелец слышал из фона. Без подсказки — 0 из 3. Замена ниже
+# требует точного совпадения слов, поэтому имя в шуме выдумать не может.
+_ASR_NAME_FIXES = (
+    (("mars", "al"), "Marshall"),
+    (("marsal",), "Marshall"),
+)
+
+
+def fix_asr_names(text: str) -> str:
+    """Починить известные ослышки имён («Mars al» -> «Marshall»)."""
+    if not text:
+        return text
+    tokens = text.split()
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        hit = False
+        for keys, name in _ASR_NAME_FIXES:
+            n = len(keys)
+            if i + n > len(tokens):
+                continue
+            chunk = [t.strip(_PUNCT).lower() for t in tokens[i:i + n]]
+            if chunk != list(keys):
+                continue
+            last = tokens[i + n - 1]
+            tail = ""
+            while last and last[-1] in _PUNCT:
+                tail = last[-1] + tail
+                last = last[:-1]
+            out.append(name + tail)
+            i += n
+            hit = True
+            break
+        if not hit:
+            out.append(tokens[i])
+            i += 1
+    return " ".join(out)
 
 
 def is_hallucination(text: str) -> bool:
@@ -414,7 +464,8 @@ def is_hallucination(text: str) -> bool:
     markers = (
         "субтитры", "продолжение следует", "спасибо за просмотр",
         "дimaторзок", "dimatorzok", "субтитры сделал", "www.", "http",
-        "thanks for watching", "подписывайтесь", "лайк", "комментарий",
+        "thanks for watching", "gracias por ver", "подписывайтесь",
+        "лайк", "комментарий",
         "постарше", "мне нужно", "ты не знаешь", "я не знаю, что это",
         "пожалуйста, послушайте", "кхм",
     )
@@ -2046,34 +2097,6 @@ class Engine:
                 return True
         return False
 
-    def _asr_hotwords(self) -> str | None:
-        """Подсказка Whisper: имена собственные из глоссария.
-
-        Имя, которого нет в языке распознавания, Whisper пишет «как
-        услышал»: «Marshall» в испанской речи стал «Mars al», и переводчик
-        честно сделал из него «Марса». hotwords (faster-whisper 1.2.1)
-        смещают декодирование к знакомым именам. Замер на 12 фразах,
-        синтезированных XTTS голосом владельца: в одном промахе («Ayer
-        hervía a Marshall en la calle») подсказка вернула «Ayer vi a
-        Marshall», на остальных 11 текст не изменился.
-        """
-        g = self._glossary()
-        if g is None:
-            return None
-        words: list[str] = []
-        size = 0
-        for entry in g.entries:
-            word = (entry.get("src") or "").strip()
-            # Только имена собственные: строчные термины (sheriff, burro)
-            # Whisper и так слышит, а лишние токены в подсказке мешают.
-            if not word or not word[0].isupper():
-                continue
-            if size + len(word) > 190:
-                break
-            words.append(word)
-            size += len(word) + 2
-        return ", ".join(words) or None
-
     def transcribe_peer(self, pcm_bytes: bytes, sr: int = SR_ASR,
                         partial: bool = False) -> tuple[str, str]:
         """Распознать чужую речь. Возвращает (текст, язык).
@@ -2115,8 +2138,7 @@ class Engine:
             audio, language=lang,
             beam_size=1 if partial else self.beam_size, vad_filter=False,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6, log_prob_threshold=-1.0,
-            hotwords=self._asr_hotwords())
+            no_speech_threshold=0.6, log_prob_threshold=-1.0)
         items = list(segs)
         if not items:
             self._asr_skip = "no_speech"
@@ -2128,6 +2150,8 @@ class Engine:
             self._asr_skip = "no_speech"
             return "", self.peer_lang
         text = " ".join(s.text.strip() for s in speech).strip()
+        # Известные ослышки имён: «Mars al»/«Marsal» — это «Marshall».
+        text = fix_asr_names(text)
         if not text:
             self._asr_skip = "empty"
             return "", self.peer_lang
