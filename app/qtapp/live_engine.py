@@ -45,11 +45,19 @@ HOLD_MAX_WAIT = 20.0
 
 # Сегментация звука собеседника (системный звук через loopback).
 # 0.8 с — «речь закончилась», но реплику в движок ещё не отдаём: на
-# границе придаточного пауза часто 1 с, и раньше каждое придаточное
+# границе придаточного пауза часто ~0,9 с, и раньше каждое придаточное
 # уходило отдельной репликой. Перевод такого огрызка теряет контекст
 # («переводит первую, потом вторую, третью часть»). Отдаём после
 # PEER_JOIN_END тишины: если человек продолжает мысль — остаётся одна фраза.
-PEER_JOIN_END = 1.30
+#
+# Окно — компромисс: оно добавляет столько же задержки каждой фразе, а
+# склейка даёт всего +0,012 chrF (замер tools/check_phrase_split.py).
+# Замер tools/check_join_window.py (18 своих записей): окно 1,0 с рвёт
+# реплику с паузой 0,9 с в 1 случае из 18, окно 1,3 с — ни в одном;
+# зато каждая фраза отдаётся на 0,3 с раньше. Настраивается без
+# пересборки: AURALOOM_PEER_JOIN_END (0,4–3,0 с).
+PEER_JOIN_END = min(3.0, max(0.4, float(os.environ.get(
+    "AURALOOM_PEER_JOIN_END", "1.0"))))
 PEER_MIN_SPEECH = 0.45
 PEER_MAX_SEG = 18.0
 # Куски отправки звука собеседника в движок (сек).
@@ -157,6 +165,8 @@ class LiveEngine(QObject):
         self._peer_strong = 0
         self._peer_noise = 0.004
         self._peer_rms: list[float] = []
+        # Окно тишины перед отдачей реплики (сек); можно менять на лету.
+        self._peer_join_end = PEER_JOIN_END
         # Номер отправляемой реплики: куски разных фраз не склеиваются,
         # даже если последний кусок предыдущей потерялся в дороге.
         self._peer_phrase = 0
@@ -1590,10 +1600,21 @@ class LiveEngine(QObject):
             self._peer_partial_acc = self._peer_acc
             self._peer_partial_t = _t.time()
             self._send_peer_partial()
-        if self._peer_silence >= PEER_JOIN_END and self._peer_speech:
+        if self._peer_silence >= self._peer_join_end and self._peer_speech:
             self._flush_peer_segment()
         elif len(self._peer_buf) * block_sec >= PEER_MAX_SEG:
             self._flush_peer_segment()
+
+    def set_peer_join_end(self, seconds: float) -> float:
+        """Окно ожидания паузы собеседника, сек (0,4–3,0)."""
+        try:
+            value = float(seconds)
+        except (TypeError, ValueError):
+            return self._peer_join_end
+        self._peer_join_end = min(3.0, max(0.4, value))
+        self.logLine.emit(
+            f"окно паузы собеседника: {self._peer_join_end:.2f} с")
+        return self._peer_join_end
 
     def _flush_peer_segment(self) -> None:
         """Отправить накопленную фразу собеседника в движок."""

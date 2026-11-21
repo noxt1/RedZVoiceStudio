@@ -171,18 +171,31 @@ class PeerJoinWindowTests(unittest.TestCase):
 
     def test_clause_pause_keeps_one_phrase(self) -> None:
         self._feed(1.5)
-        self._silence(1.0)              # пауза на запятой
+        # пауза на запятой короче окна 1,0 с (с запасом на тихое начало
+        # следующей фразы: первый блок _feed тоже считается тишиной)
+        self._silence(0.8)
         self.assertEqual(self.sent, [])
         self._feed(1.0)                 # человек продолжает мысль
-        self._silence(1.4)
+        self._silence(1.2)
         self.assertEqual(len(self.sent), 1, self.sent)
 
     def test_sentence_pause_starts_new_phrase(self) -> None:
         self._feed(1.5)
-        self._silence(1.4)
+        self._silence(1.2)
         self._feed(1.5)
-        self._silence(1.4)
+        self._silence(1.2)
         self.assertEqual(len(self.sent), 2)
+
+    def test_join_window_is_configurable(self) -> None:
+        self.assertEqual(self.live.set_peer_join_end(1.3), 1.3)
+        self._feed(1.5)
+        self._silence(1.1)              # при 1,0 с фраза бы уже ушла
+        self.assertEqual(self.sent, [])
+        self._silence(0.3)
+        self.assertEqual(len(self.sent), 1)
+        # вне диапазона — зажимается, а не ломает сегментацию
+        self.assertEqual(self.live.set_peer_join_end(99), 3.0)
+        self.assertEqual(self.live.set_peer_join_end(0), 0.4)
 
     def test_long_phrase_parts_marked_not_last(self) -> None:
         self._feed(12.0)
