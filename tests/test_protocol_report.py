@@ -121,6 +121,22 @@ class GuiEventTests(unittest.TestCase):
         self.live._on_event("metrics", {"event": "metrics", "asr_ms": 1})
         self.assertEqual(self.live.lastMetrics["timing"], timing)
 
+    def test_recent_pairs_keep_heard_and_translated(self) -> None:
+        """В отчёт должны попадать пары «услышано -> перевод»."""
+        self.live._on_event("peer_text", {
+            "lang": "es", "src": "Marshall estaba con un burro",
+            "ru": "Маршалл был с ослом"})
+        pairs = self.live.recentPairs()
+        self.assertEqual(pairs[-1],
+                         ("es", "Marshall estaba con un burro",
+                          "Маршалл был с ослом"))
+
+    def test_recent_pairs_are_capped(self) -> None:
+        for i in range(14):
+            self.live._on_event("peer_text", {
+                "lang": "es", "src": f"frase {i}", "ru": f"фраза {i}"})
+        self.assertEqual(len(self.live.recentPairs()), 10)
+
     def test_metrics_merge_keeps_earlier_keys(self) -> None:
         self.live._on_event("boot", {"protocol": lc.PROTOCOL_VERSION})
         self.live._on_event("metrics", {"asr_ms": 10, "mt_ms": 20})

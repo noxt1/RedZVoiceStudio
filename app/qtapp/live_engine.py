@@ -229,6 +229,9 @@ class LiveEngine(QObject):
         self._mode = "balanced"
         self._mode_info = ""
         self._peer_partial = ""
+        # Последние пары «оригинал собеседника -> перевод»: без них в отчёте
+        # видно только счётчики, и разобрать «перевёл не туда» невозможно.
+        self._recent_pairs: list[tuple[str, str, str]] = []
         self._metrics: dict = {}
         self._dropped = 0
         self._cancelled = 0
@@ -361,6 +364,10 @@ class LiveEngine(QObject):
     def peerPartial(self) -> str:
         """Промежуточное распознавание (только показ, без перевода)."""
         return self._peer_partial
+
+    def recentPairs(self) -> list[tuple[str, str, str]]:
+        """Последние пары (язык, оригинал, перевод) для текста отчёта."""
+        return list(self._recent_pairs)
 
     @Property("QVariantMap", notify=metricsChanged)
     def lastMetrics(self):
@@ -1963,6 +1970,8 @@ class LiveEngine(QObject):
             self.peerTextReady.emit(src_lang, ru, original)
             if original or ru:
                 self._last_in = (original, ru)
+                self._recent_pairs.append((src_lang, original, ru))
+                del self._recent_pairs[:-10]
                 self.lastPhraseChanged.emit()
             if missing:
                 self.errorMessage.emit(

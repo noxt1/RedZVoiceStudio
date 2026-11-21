@@ -169,6 +169,12 @@ PEER_PARTS_MAX_BYTES = int(os.environ.get("REDZ_PEER_PARTS_MAX", "2000000"))
 # команд/событий: GUI сравнивает её с boot-событием и предупреждает,
 # если рядом работает движок от другой сборки (частый случай — старый
 # процесс движка после обновления EXE: фиксы не доезжают, а ошибок нет).
+# Писать ли распознанный/переведённый текст в лог строками [mt]. По
+# умолчанию выключено (это содержимое разговора); включается на время
+# разбора: set AURALOOM_LOG_MT_TEXT=1.
+MT_LOG_TEXT = os.environ.get("AURALOOM_LOG_MT_TEXT", "") not in (
+    "", "0", "false", "False")
+
 PROTOCOL_VERSION = 3
 
 # Почему фраза собеседника осталась без перевода (счётчики для отчёта).
@@ -356,6 +362,15 @@ def _tone_params(text: str, ru: str = "", liveliness: int = 2) -> tuple[str, dic
         log(f"[engine] тон не определён ({type(exc).__name__}: {exc})")
         return "neutral", {"temperature": 0.75, "top_p": 0.86, "top_k": 50,
                            "speed": 1.02, "repetition_penalty": 5.0}
+
+
+def _cyrillic_share(text: str) -> float:
+    """Доля кириллицы среди букв (для проверки «это правда русский?»)."""
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return 0.0
+    cyr = sum(1 for ch in letters if "\u0400" <= ch <= "\u04ff")
+    return cyr / len(letters)
 
 
 def is_hallucination(text: str) -> bool:
@@ -1591,6 +1606,8 @@ class Engine:
         if self.lang == "ow" and voice_lang is not None:
             text = voice_lang.to_oldwest(text)
         self._cache_put(key, text)
+        if MT_LOG_TEXT:
+            log(f"[mt] ru->{self.lang}: {ru.strip()!r} -> {text!r}")
         return text
 
     def translate_to_ru(self, text: str, src: str) -> str:
@@ -1617,6 +1634,8 @@ class Engine:
                 f"{type(exc).__name__}: {exc}")
             return ""
         self._cache_put(key, out)
+        if MT_LOG_TEXT:
+            log(f"[mt] {src}->ru: {text.strip()!r} -> {out!r}")
         return out
 
     def _translate_peer_to_ru(self, text: str, src: str,
@@ -2044,13 +2063,46 @@ class Engine:
             # Ручной выбор всегда приоритетнее автоматики.
             self.peer_lang_confirmed = self.peer_lang
             return text, self.peer_lang
+        if detected == "ru" and _cyrillic_share(text) < 0.5:
+            # «Русский» без единой кириллической буквы — это ошибка
+            # определения: текст испанца уходил в озвучку без перевода.
+            # До подтверждения языка дело не доводим, иначе «ru» залипает
+            # в peer_lang_confirmed и ломает следующие фразы.
+            alt = self._fallback_peer_lang("", text, allow_guess=True)
+            if alt:
+                log("[engine] распознано как ru, но текст без кириллицы — "
+                    f"перевожу как {alt}")
+                self._peer_lang_prob = prob
+                return text, alt
         accepted, reason = self._detect_peer_lang(detected, prob, dur, words)
         if not accepted:
+            # Раньше фраза выбрасывалась целиком. В живой сессии это стоило
+            # 8 реплик из 12: определение языка колеблется на коротких и
+            # шумных фразах, а собеседник слышал тишину. Теперь смена языка
+            # по-прежнему требует подтверждения, но сама фраза переводится
+            # уже подтверждённым языком — терять её хуже, чем перевести.
+            fallback = self._fallback_peer_lang(detected, text)
+            if fallback:
+                log(f"[engine] язык не подтверждён ({reason}) — "
+                    f"перевожу как {fallback}")
+                self._peer_lang_prob = prob
+                return text, fallback
             self._asr_skip = "lang"
-            log(f"[engine] язык собеседника не подтверждён ({reason}) — "
-                f"фразу не перевожу")
+            log(f"[engine] язык собеседника не подтверждён ({reason}) и "
+                f"перевести нечем — фразу не перевожу")
             return "", self.peer_lang
         lang = self.peer_lang_confirmed or detected
+        if lang == "ru" and _cyrillic_share(text) < 0.5:
+            # Whisper иногда «узнаёт» русский в испанской речи. Раньше такой
+            # текст уходил в озвучку без перевода (mt_ms=0) — отсюда «перевёл
+            # совсем не туда». Для русского собеседника кириллица есть, и
+            # этот путь не срабатывает.
+            alt = self._fallback_peer_lang("", text, allow_guess=True)
+            if alt:
+                log("[engine] распознано как ru, но текст без кириллицы — "
+                    f"перевожу как {alt}")
+                self._peer_lang_prob = prob
+                return text, alt
         self._peer_lang_prob = prob
         return text, lang
 
@@ -2118,6 +2170,31 @@ class Engine:
         emit({"event": "peer_lang_detected", **payload, "accepted": True,
               "reason": "язык подтверждён"})
         return True, "ok"
+
+    def _fallback_peer_lang(self, detected: str, text: str,
+                            allow_guess: bool = False) -> str:
+        """Каким языком перевести фразу, если auto не подтвердил новый.
+
+        Приоритет — уже подтверждённый язык собеседника: он не прыгает от
+        одной короткой реплики. Если его нет — определённый, лишь бы для
+        него была модель. «ru» здесь не годится: это язык пользователя, и
+        переводить с него нечего.
+        """
+        for code in (self.peer_lang_confirmed, detected):
+            if code and code not in ("auto", "ru") \
+                    and self.reverse_available(code):
+                return code
+        if not allow_guess or _cyrillic_share(text) >= 0.5:
+            return ""
+        # Совсем нет зацепок, а текст явно не русский: берём недавно
+        # определённый язык с моделью, иначе испанский (типовой собеседник).
+        recent = [c for (c, _t) in reversed(self._lang_hits)
+                  if c not in ("", "auto", "ru") and self.reverse_available(c)]
+        if recent:
+            return recent[0]
+        if self.reverse_available("es"):
+            return "es"
+        return ""
 
     # ---------- проверка синтеза ----------
     def verify(self, audio: np.ndarray, expected: str) -> float:

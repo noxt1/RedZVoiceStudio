@@ -756,6 +756,19 @@ class AppState(QObject):
                 value = metrics.get(key)
                 if value not in (None, ""):
                     lines.append(f"{label}: {value}")
+            # Последние пары «что услышал -> что перевёл»: по ним видно,
+            # где именно потерялся смысл (распознавание или перевод).
+            try:
+                pairs = eng.recentPairs()
+            except Exception:
+                pairs = []
+            if pairs:
+                lines.append("последние фразы собеседника "
+                             "(язык: услышано -> перевод):")
+                for code, src, ru in pairs[-8:]:
+                    src = " ".join(str(src).split())[:120]
+                    ru = " ".join(str(ru).split())[:120]
+                    lines.append(f"  [{code or '?'}] {src} -> {ru or '—'}")
         return "\n".join(lines)
 
     @Slot()
