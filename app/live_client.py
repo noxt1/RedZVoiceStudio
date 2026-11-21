@@ -352,7 +352,8 @@ class LiveTranslator:
         return True
 
     def send_peer_pcm(self, pcm, sr: int = 16000,
-                      partial: bool = False, last: bool = True) -> bool:
+                      partial: bool = False, last: bool = True,
+                      phrase: int | None = None) -> bool:
         """Отдать фрагмент звука игры на разбор речи игроков.
 
         Принимает И bytes int16 (так отдаёт wasapi_loopback), И float32-массив.
@@ -361,6 +362,8 @@ class LiveTranslator:
 
         last=False — это кусок длинной фразы (транспорт, не реплика):
         движок скопит куски и распознает/переведёт фразу целиком.
+        phrase — номер реплики: движок не склеит куски двух разных фраз,
+        если у предыдущей потерялся последний кусок.
         """
         if not self.ready or pcm is None:
             return False
@@ -378,6 +381,8 @@ class LiveTranslator:
                 msg["partial"] = True
             if not last:
                 msg["last"] = False
+            if phrase is not None:
+                msg["phrase"] = int(phrase)
             self._send(msg)
             return True
         except Exception as exc:  # noqa: BLE001

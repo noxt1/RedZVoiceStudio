@@ -106,7 +106,7 @@ class PeerSegmentationTests(unittest.TestCase):
         self.sent = []
         translator = mock.Mock()
         translator.ready = True
-        translator.send_peer_pcm = lambda pcm, sr, last=True: (
+        translator.send_peer_pcm = lambda pcm, sr, last=True, phrase=None: (
             self.sent.append((len(pcm), sr)) or True)
         translator.last_send_error = ""
         self.live._translator = translator

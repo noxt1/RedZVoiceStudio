@@ -78,8 +78,63 @@ class PeerPartJoinTests(unittest.TestCase):
     def test_queued_part_keeps_last_flag(self) -> None:
         self.engine.push_peer_pcm(b"\x00\x00" * 10, 16000, last=False)
         item = self.engine._peer_q.get_nowait()
-        self.assertEqual(len(item), 4)
+        self.assertEqual(len(item), 5)
         self.assertFalse(item[3])
+        self.assertIsNone(item[4])
+
+    def test_queued_part_keeps_phrase_number(self) -> None:
+        self.engine.push_peer_pcm(b"\x00\x00" * 10, 16000,
+                                  last=False, phrase=7)
+        self.assertEqual(self.engine._peer_q.get_nowait()[4], 7)
+
+
+class PeerPartResetTests(unittest.TestCase):
+    """Потерянный последний кусок не приклеивает следующую фразу."""
+
+    def setUp(self) -> None:
+        self.engine = live_translate.Engine()
+
+    def test_next_phrase_number_drops_orphans(self) -> None:
+        self.assertIsNone(self.engine._join_peer_parts(
+            b"old1", last=False, phrase=1))
+        self.assertIsNone(self.engine._join_peer_parts(
+            b"old2", last=False, phrase=1))
+        # последний кусок фразы 1 потерялся — приходит фраза 2
+        self.assertIsNone(self.engine._join_peer_parts(
+            b"new1", last=False, phrase=2))
+        self.assertEqual(self.engine._join_peer_parts(
+            b"new2", last=True, phrase=2), b"new1new2")
+
+    def test_single_part_of_next_phrase_stays_alone(self) -> None:
+        self.engine._join_peer_parts(b"old", last=False, phrase=1)
+        self.assertEqual(self.engine._join_peer_parts(
+            b"next", last=True, phrase=2), b"next")
+
+    def test_same_phrase_number_still_joins(self) -> None:
+        self.engine._join_peer_parts(b"a", last=False, phrase=5)
+        self.engine._join_peer_parts(b"b", last=False, phrase=5)
+        self.assertEqual(self.engine._join_peer_parts(
+            b"c", last=True, phrase=5), b"abc")
+
+    def test_timeout_drops_orphans_without_numbers(self) -> None:
+        self.engine._join_peer_parts(b"old", last=False)
+        self.engine._peer_parts_at -= live_translate.PEER_PARTS_TTL + 1.0
+        self.assertEqual(self.engine._join_peer_parts(b"next", last=True),
+                         b"next")
+        self.assertEqual(self.engine._peer_parts, [])
+
+    def test_fresh_parts_without_numbers_join(self) -> None:
+        self.engine._join_peer_parts(b"a", last=False)
+        self.engine._join_peer_parts(b"b", last=False)
+        self.assertEqual(self.engine._join_peer_parts(b"c", last=True), b"abc")
+
+    def test_buffer_is_bounded(self) -> None:
+        chunk = b"\x00\x00" * 1000
+        for _ in range(live_translate.PEER_PARTS_MAX_BYTES // len(chunk) + 3):
+            self.engine._join_peer_parts(chunk, last=False)
+            self.assertLessEqual(
+                sum(len(p) for p in self.engine._peer_parts),
+                live_translate.PEER_PARTS_MAX_BYTES)
 
 
 class PeerJoinWindowTests(unittest.TestCase):
@@ -95,7 +150,7 @@ class PeerJoinWindowTests(unittest.TestCase):
         self.sent: list[bool] = []          # флаги last отправленных кусков
         translator = mock.Mock()
         translator.ready = True
-        translator.send_peer_pcm = lambda pcm, sr, last=True: (
+        translator.send_peer_pcm = lambda pcm, sr, last=True, phrase=None: (
             self.sent.append(last) or True)
         translator.last_send_error = ""
         self.live._translator = translator
@@ -134,6 +189,20 @@ class PeerJoinWindowTests(unittest.TestCase):
         self.assertGreater(len(self.sent), 1)
         self.assertEqual(self.sent[-1], True)
         self.assertTrue(all(flag is False for flag in self.sent[:-1]))
+
+    def test_each_phrase_gets_its_own_number(self) -> None:
+        """Номер реплики растёт: куски разных фраз не склеятся в движке."""
+        seen: list[int | None] = []
+        self.live._translator.send_peer_pcm = (
+            lambda pcm, sr, last=True, phrase=None:
+            seen.append(phrase) or self.sent.append(last) or True)
+        self._feed(1.5)
+        self._silence(1.4)
+        self._feed(1.5)
+        self._silence(1.4)
+        self.assertEqual(len(seen), 2, seen)
+        self.assertTrue(all(n is not None for n in seen), seen)
+        self.assertEqual(len(set(seen)), len(seen), f"номер не растёт: {seen}")
 
 
 class IncomingAudioTests(unittest.TestCase):

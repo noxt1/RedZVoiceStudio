@@ -157,6 +157,9 @@ class LiveEngine(QObject):
         self._peer_strong = 0
         self._peer_noise = 0.004
         self._peer_rms: list[float] = []
+        # Номер отправляемой реплики: куски разных фраз не склеиваются,
+        # даже если последний кусок предыдущей потерялся в дороге.
+        self._peer_phrase = 0
 
         # --- входящий перевод: RU-озвучка в наушники ---
         self._incoming = None
@@ -1636,9 +1639,11 @@ class LiveEngine(QObject):
                 continue
             parts.append(part)
         sent = 0
+        self._peer_phrase += 1
         for k, part in enumerate(parts):
             pcm = (np.clip(part, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-            if not tr.send_peer_pcm(pcm, sr, last=(k == len(parts) - 1)):
+            if not tr.send_peer_pcm(pcm, sr, last=(k == len(parts) - 1),
+                                    phrase=self._peer_phrase):
                 break
             sent += 1
         err = getattr(tr, "last_send_error", "")

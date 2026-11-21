@@ -156,6 +156,15 @@ MT_BEAMS_REVERSE = max(1, int(os.environ.get("REDZ_MT_BEAMS_REVERSE", "4")))
 # самим ASR; увеличение beam калечит качество — не трогаем.
 MT_BEAMS_FORWARD = max(1, int(os.environ.get("REDZ_MT_BEAMS_FORWARD", "1")))
 
+# Недосклеенные куски реплики собеседника не должны ждать последнюю часть
+# вечно: если последний кусок потерялся (переполнение очереди, обрыв записи
+# в stdin движка), остаток приклеивался к СЛЕДУЮЩЕЙ фразе, и две разные
+# реплики уходили в распознавание как одна. Основной признак — номер фразы
+# (GUI нумерует каждую отправленную реплику), таймаут и ограничение объёма —
+# страховка для источника без номера.
+PEER_PARTS_TTL = max(1.0, float(os.environ.get("REDZ_PEER_PARTS_TTL", "8")))
+PEER_PARTS_MAX_BYTES = int(os.environ.get("REDZ_PEER_PARTS_MAX", "2000000"))
+
 
 def _hf_hub_dir() -> str:
     """Каталог кэша HuggingFace (оттуда движок берёт модели)."""
@@ -430,6 +439,8 @@ class Engine:
         # склеиваются обратно ДО распознавания, иначе каждые 5 с
         # переводились как отдельные реплики без контекста.
         self._peer_parts: list[bytes] = []
+        self._peer_parts_id: int | None = None   # номер незаконченной фразы
+        self._peer_parts_at = 0.0                # когда получен первый кусок
         # Очередь входящего синтеза: голос один (XTTS), поэтому фразы
         # озвучиваются строго по очереди, а не параллельными потоками.
         self._incoming_jobs: list[tuple] = []
@@ -1638,7 +1649,7 @@ class Engine:
         if code not in allowed:
             code = "auto"
         self.peer_lang = code
-        self._peer_parts = []
+        self._reset_peer_parts("смена языка собеседника")
         self._bump_gen(f"язык собеседника {code}")
         self._lang_hits.clear()
         if code != "auto":
@@ -1652,17 +1663,21 @@ class Engine:
         return self.peer_lang
 
     def push_peer_pcm(self, pcm_bytes: bytes, sr: int = SR_ASR,
-                      partial: bool = False, last: bool = True) -> bool:
+                      partial: bool = False, last: bool = True,
+                      phrase: int | None = None) -> bool:
         """Отдать фрагмент звука игры на разбор (что говорят игроки).
 
         partial=True — промежуточный срез ещё не законченной реплики:
         он только показывается в интерфейсе и НЕ переводится.
         last=False — кусок одной фразы: движок скопит куски и обработает
         фразу целиком (иначе длинная реплика рвётся на куски по 5 с).
+        phrase — номер фразы: куски с другим номером не склеиваются с
+        остатком предыдущей (если её последний кусок потерялся).
         """
         if not pcm_bytes:
             return False
-        item = (pcm_bytes, sr, bool(partial), bool(last))
+        item = (pcm_bytes, sr, bool(partial), bool(last),
+                None if phrase is None else int(phrase))
         try:
             self._peer_q.put_nowait(item)
         except queue.Full:
@@ -1682,21 +1697,53 @@ class Engine:
                     return False
                 # выкинули промежуточный срез; недосклеенные куски фразы
                 # после дырки не имеют смысла
-                self._peer_parts = []
+                self._reset_peer_parts("потерян кусок в очереди")
                 self._peer_q.put_nowait(item)
             except (queue.Empty, queue.Full):
                 self.dropped += 1
                 return False
         return True
 
-    def _join_peer_parts(self, pcm: bytes, last: bool) -> bytes | None:
+    def _reset_peer_parts(self, reason: str = "") -> None:
+        """Выбросить недосклеенный остаток фразы (не приклеивать к новой)."""
+        if self._peer_parts:
+            log(f"[engine] остаток реплики собеседника отброшен "
+                f"({len(self._peer_parts)} куск., {reason})")
+        self._peer_parts = []
+        self._peer_parts_id = None
+        self._peer_parts_at = 0.0
+
+    def _peer_parts_stale(self, phrase: int | None, now: float) -> bool:
+        """Остаток относится к другой/слишком старой фразе."""
+        if not self._peer_parts:
+            return False
+        if phrase is not None and self._peer_parts_id is not None \
+                and phrase != self._peer_parts_id:
+            return True
+        return (now - self._peer_parts_at) >= PEER_PARTS_TTL
+
+    def _join_peer_parts(self, pcm: bytes, last: bool,
+                         phrase: int | None = None) -> bytes | None:
         """Склеить куски одной фразы. None — фраза ещё не закончилась."""
+        now = time.time()
+        if self._peer_parts_stale(phrase, now):
+            self._reset_peer_parts(
+                f"фраза {phrase}, в буфере {self._peer_parts_id}, "
+                f"возраст {now - self._peer_parts_at:.1f} с")
         if not last:
+            if not self._peer_parts:
+                self._peer_parts_at = now
             self._peer_parts.append(pcm)
+            if phrase is not None:
+                self._peer_parts_id = phrase
+            if sum(len(p) for p in self._peer_parts) > PEER_PARTS_MAX_BYTES:
+                self._reset_peer_parts("переполнение буфера кусков")
             return None
         if self._peer_parts:
             pcm = b"".join(self._peer_parts + [pcm])
-            self._peer_parts = []
+        self._peer_parts = []
+        self._peer_parts_id = None
+        self._peer_parts_at = 0.0
         return pcm
 
     def _peer_loop(self) -> None:
@@ -1709,8 +1756,9 @@ class Engine:
             pcm, sr = item[0], item[1]
             partial = bool(item[2]) if len(item) > 2 else False
             last = bool(item[3]) if len(item) > 3 else True
+            phrase = item[4] if len(item) > 4 else None
             if not partial:
-                joined = self._join_peer_parts(pcm, last)
+                joined = self._join_peer_parts(pcm, last, phrase)
                 if joined is None:
                     continue
                 pcm = joined
@@ -2396,8 +2444,11 @@ def main() -> None:
             elif cmd == "peer":
                 # фрагмент звука игры -> разбор речи игроков
                 pcm = base64.b64decode(msg.get("pcm", ""))
-                engine.push_peer_pcm(pcm, int(msg.get("sr", SR_ASR)),
-                                     bool(msg.get("partial")))
+                phrase = msg.get("phrase")
+                engine.push_peer_pcm(
+                    pcm, int(msg.get("sr", SR_ASR)),
+                    bool(msg.get("partial")), bool(msg.get("last", True)),
+                    None if phrase is None else int(phrase))
             elif cmd == "liveliness":
                 # уровень живости от пользователя (0 — ровно, 3 — максимум)
                 engine.liveliness = max(0, min(3, int(msg.get("level", 2))))
