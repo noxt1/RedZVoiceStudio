@@ -106,6 +106,7 @@
 | `check_accuracy_ru.py` | точность распознавания и перевода на своих записях подсказок: WER по словам и chrF против эталонного испанского; два шага — `--stage prepare` (Python приложения) и `--stage run` (Python движка) |
 | `check_phrase_split.py` | цена перевода кусками: та же запись режется по самой тихой внутренней паузе и переводится по половинам против цельной фразы; WER и chrF, JSON в `out/phrase_split.json` (Python движка) |
 | `check_join_window.py` | цена окна ожидания паузы (`PEER_JOIN_END`): настоящая сегментация `LiveEngine` на своих записях, вставленная пауза на запятой и окна 0,8/1,0/1,3 с — сколько реплик рвётся; JSON в `out/join_window.json` (Python приложения) |
+| `check_reverse_quality.py` | обратный перевод ES→RU: 18 испанских подсказок синтезируются XTTS и проходят настоящий путь `Engine.transcribe_peer` → `_translate_peer_to_ru`; WER (es) и chrF (ru) против `PROMPTS_RU/ES`, автоопределение языка и пустые переводы; JSON в `out/reverse_quality.json` (Python движка) |
 | `diag_pages.py` | что реально отрисовано на каждой странице |
 | `shot_pages.py`, `shot_voices.py` | скриншоты страниц/под-вкладок (импортируют `tkinter` ради DPI — проверять, что снимают Qt-окна) |
 | `switch_tab.py`, `view_tab.py` | переключить вкладку и снять скриншот (эпоха Tk) |
