@@ -55,6 +55,11 @@ DEFAULT_ENTRIES: list[dict] = [
      "it": "asino"},
     {"src": "asno", "ru": "осёл", "en": "donkey", "es": "asno",
      "it": "asino"},
+    # Имя, которое Whisper в испанской речи слышит как два слова («Mars al»).
+    # Нужно прежде всего как подсказка hotwords в распознавании: без неё
+    # переводчик получает «Марса» вместо «Маршала».
+    {"src": "Marshall", "ru": "Маршал", "en": "Marshall",
+     "es": "Marshall", "it": "Marshall"},
 ]
 
 

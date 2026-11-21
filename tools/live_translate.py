@@ -1579,7 +1579,7 @@ class Engine:
                 self._text_cache.popitem(last=False)
 
     def _run_chain(self, text: str, chain: list[tuple], beam: int = 1,
-                   dst: str = "") -> str:
+                   dst: str = "", use_glossary: bool = True) -> str:
         """Прогнать текст по цепочке моделей перевода.
 
         Элемент цепочки — пара (токенизатор, модель) либо
@@ -1589,7 +1589,7 @@ class Engine:
         import torch
         # Имена и термины прячем за метками, чтобы модель их не переводила
         used: list[dict] = []
-        g = self._glossary()
+        g = self._glossary() if use_glossary else None
         if g is not None:
             text, used = g.protect(text)
         for item in chain:
@@ -1657,7 +1657,14 @@ class Engine:
         if not chain:
             return ""
         try:
-            out = self._run_chain(text, chain, beam=MT_BEAMS_REVERSE, dst="ru")
+            # Глоссарий здесь НЕ применяется. Он подставляет русский термин
+            # как есть, а opus-mt ставит вокруг метки нужный падеж — в итоге
+            # получалось «увидел Артур Морган» и «сексом с осёл» вместо
+            # «с ослом». Замер (es->ru, beam 4): с защитой — «увидел Марса,
+            # занимавшегося сексом с осёл», без неё — «…с ослом»;
+            # «увидел Артур Морган» -> «увидел Артура Моргана».
+            out = self._run_chain(text, chain, beam=MT_BEAMS_REVERSE,
+                                  dst="ru", use_glossary=False)
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] перевод {src}->ru не удался: "
                 f"{type(exc).__name__}: {exc}")
@@ -1693,7 +1700,8 @@ class Engine:
         if not chain:
             return en
         try:
-            return self._run_chain(en, chain, beam=MT_BEAMS_REVERSE, dst="ru")
+            return self._run_chain(en, chain, beam=MT_BEAMS_REVERSE,
+                                   dst="ru", use_glossary=False)
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] en->ru не удался: {exc}")
             return en
@@ -2038,6 +2046,34 @@ class Engine:
                 return True
         return False
 
+    def _asr_hotwords(self) -> str | None:
+        """Подсказка Whisper: имена собственные из глоссария.
+
+        Имя, которого нет в языке распознавания, Whisper пишет «как
+        услышал»: «Marshall» в испанской речи стал «Mars al», и переводчик
+        честно сделал из него «Марса». hotwords (faster-whisper 1.2.1)
+        смещают декодирование к знакомым именам. Замер на 12 фразах,
+        синтезированных XTTS голосом владельца: в одном промахе («Ayer
+        hervía a Marshall en la calle») подсказка вернула «Ayer vi a
+        Marshall», на остальных 11 текст не изменился.
+        """
+        g = self._glossary()
+        if g is None:
+            return None
+        words: list[str] = []
+        size = 0
+        for entry in g.entries:
+            word = (entry.get("src") or "").strip()
+            # Только имена собственные: строчные термины (sheriff, burro)
+            # Whisper и так слышит, а лишние токены в подсказке мешают.
+            if not word or not word[0].isupper():
+                continue
+            if size + len(word) > 190:
+                break
+            words.append(word)
+            size += len(word) + 2
+        return ", ".join(words) or None
+
     def transcribe_peer(self, pcm_bytes: bytes, sr: int = SR_ASR,
                         partial: bool = False) -> tuple[str, str]:
         """Распознать чужую речь. Возвращает (текст, язык).
@@ -2079,7 +2115,8 @@ class Engine:
             audio, language=lang,
             beam_size=1 if partial else self.beam_size, vad_filter=False,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6, log_prob_threshold=-1.0)
+            no_speech_threshold=0.6, log_prob_threshold=-1.0,
+            hotwords=self._asr_hotwords())
         items = list(segs)
         if not items:
             self._asr_skip = "no_speech"

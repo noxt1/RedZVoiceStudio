@@ -23,8 +23,8 @@ class MtBeamPolicy(unittest.TestCase):
         eng.lang = "es"
         self.calls = []
 
-        def run_chain(text, chain, beam=1, dst=""):
-            self.calls.append(beam)
+        def run_chain(text, chain, beam=1, dst="", use_glossary=True):
+            self.calls.append((beam, use_glossary))
             return f"<{text}>"
 
         eng._run_chain = run_chain
@@ -33,14 +33,18 @@ class MtBeamPolicy(unittest.TestCase):
     def test_reverse_uses_beam_search(self):
         eng = self._engine()
         eng.translate_to_ru("Hola amigo", "es")
-        self.assertEqual(self.calls, [lt.MT_BEAMS_REVERSE])
+        self.assertEqual([c[0] for c in self.calls], [lt.MT_BEAMS_REVERSE])
+        # Глоссарий в обратную сторону не применяется: он вставлял русский
+        # термин без падежа («с осёл», «увидел Артур Морган»).
+        self.assertFalse(self.calls[0][1])
         self.assertGreaterEqual(lt.MT_BEAMS_REVERSE, 2)
 
     def test_forward_stays_greedy(self):
         eng = self._engine()
         eng._mt_for = lambda code: [("tok", "model")]
         eng.translate_text("Привет, друг")
-        self.assertEqual(self.calls, [1])
+        self.assertEqual([c[0] for c in self.calls], [1])
+        self.assertTrue(self.calls[0][1])
         self.assertLess(lt.MT_BEAMS_FORWARD, 2)
 
     def test_empty_and_same_language_untouched(self):

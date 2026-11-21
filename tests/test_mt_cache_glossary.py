@@ -11,6 +11,29 @@ for p in (_ROOT, os.path.join(_ROOT, "tools"), os.path.join(_ROOT, "app")):
         sys.path.insert(0, p)
 
 import glossary
+import live_translate
+
+
+class AsrHotwordsTest(unittest.TestCase):
+    """hotwords для Whisper: только имена, без строчных терминов."""
+
+    def _engine(self, entries):
+        eng = object.__new__(live_translate.Engine)
+        live_translate.Engine._ensure_state(eng)
+        eng.glossary = glossary.Glossary(entries) if entries is not None else False
+        return eng
+
+    def test_names_only(self) -> None:
+        eng = self._engine([
+            {"src": "Marshall", "ru": "Маршал"},
+            {"src": "Arthur Morgan", "ru": "Артур Морган"},
+            {"src": "burro", "ru": "осёл"},
+        ])
+        # глоссарий сортирует термины по длине: сначала «Arthur Morgan»
+        self.assertEqual(eng._asr_hotwords(), "Arthur Morgan, Marshall")
+
+    def test_no_glossary(self) -> None:
+        self.assertIsNone(self._engine(None)._asr_hotwords())
 
 
 class GlossaryTest(unittest.TestCase):
