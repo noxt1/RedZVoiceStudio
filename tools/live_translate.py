@@ -365,7 +365,7 @@ def _tone_params(text: str, ru: str = "", liveliness: int = 2) -> tuple[str, dic
 
 
 # Знаки, которые снимаем с краёв слова при сравнении повторов и имён.
-_PUNCT = ".,!?;:¿¡\"'()"
+_PUNCT = ".,!?;:¿¡…—–\"'()"
 
 
 def _cyrillic_share(text: str) -> float:
@@ -449,6 +449,56 @@ def fix_asr_names(text: str) -> str:
     return " ".join(out)
 
 
+# Заготовки Whisper из обучающих субтитров: на шуме модель «прощается со
+# зрителем» («We'll see you next time»). Проверяем только короткий текст,
+# чтобы не выбросить живую фразу, где эти слова стоят рядом с другими.
+_BOILERPLATE = (
+    "see you next time", "see you in the next video",
+    "thanks for watching", "thank you for watching",
+    "like and subscribe", "subscribe to my channel",
+)
+
+# Мычание и вздохи: смысла в них нет, а в переводе из них получается «Угу»,
+# которое уходит в озвучку.
+_FILLERS = frozenset((
+    "mm", "mmm", "mmmm", "mm-mm", "mm-hmm", "mmhmm", "mhm", "hm", "hmm",
+    "uh", "uh-huh", "um", "erm",
+))
+
+
+def _is_filler(text: str) -> bool:
+    """Текст — только мычание/вздохи («Mm-mm», «Hmm»)."""
+    words = [w.strip(_PUNCT).lower() for w in text.split()]
+    words = [w for w in words if w]
+    return bool(words) and len(words) <= 3 and all(w in _FILLERS for w in words)
+
+
+def _pure_repetition(text: str, max_words: int = 8,
+                     min_reps: int = 4) -> bool:
+    """Весь короткий текст — один и тот же повтор 4+ раза.
+
+    Реальные галлюцинации из фона: «Look, look, look, look, look, look.»
+    (в переводе «Смотри, смотри, смотри…»), «Apres, apres, apres…»,
+    «Watch out, watch out, watch out, watch out.». Это цикл декодера, а не
+    речь: живой человек повторяет фразу 2–3 раза, и рядом обычно есть
+    другие слова («Vete a la mierda» x3, «Пошёл нахуй» x3), а тут весь
+    сегмент — один и тот же повтор.
+    """
+    words = [w.strip(_PUNCT).lower() for w in text.split()]
+    words = [w for w in words if w]
+    if not words or len(words) > max_words:
+        return False
+    for n in (1, 2):
+        if len(words) % n:
+            continue
+        if len(words) // n < min_reps:
+            continue
+        gram = words[:n]
+        if all(words[i:i + n] == gram for i in range(0, len(words), n)):
+            return True
+    return False
+
+
 def is_hallucination(text: str) -> bool:
     """Похоже ли это на галлюцинацию Whisper (текст из тишины/шума)?
 
@@ -470,6 +520,10 @@ def is_hallucination(text: str) -> bool:
         "пожалуйста, послушайте", "кхм",
     )
     if any(m in low for m in markers):
+        return True
+    if len(low.split()) <= 6 and any(b in low for b in _BOILERPLATE):
+        return True
+    if _is_filler(low) or _pure_repetition(low):
         return True
     return _repeated_ngram(low)
 

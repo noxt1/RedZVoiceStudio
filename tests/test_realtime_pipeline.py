@@ -204,6 +204,27 @@ class HallucinationFilterTests(unittest.TestCase):
                 "¿Dónde está el caballo? Creo que lo dejé cerca del río.")
         self.assertTrue(live_translate.is_hallucination(text))
 
+    def test_short_pure_repeat_is_dropped(self):
+        """Реальные галлюцинации из фона: «Look, look, look…», «Apres…»."""
+        for text in (
+            "Look, look, look, look, look, look.",
+            "Apres, apres, apres, apres, apres, apres.",
+            "Watch out, watch out, watch out, watch out.",
+            "Apres Apres Apres Apres Apres",
+        ):
+            self.assertTrue(live_translate.is_hallucination(text), text)
+
+    def test_filler_and_outro_are_dropped(self):
+        """«Mm-mm» -> «Угу», «We'll see you next time» — заготовки Whisper."""
+        for text in (
+            "Mm-mm.",
+            "Mmm.",
+            "Hmm, hmm.",
+            "We'll see you next time.",
+            "Thanks for watching!",
+        ):
+            self.assertTrue(live_translate.is_hallucination(text), text)
+
     def test_normal_speech_with_a_repeat_is_kept(self):
         """Живая речь не должна отбрасываться: короткие повторы — норма."""
         for text in (
@@ -211,7 +232,7 @@ class HallucinationFilterTests(unittest.TestCase):
             "Сегодня утром я вышел на улицу и увидел, как Маршал "
             "занимается сексом с ослом.",
             "Entonces voy a ir a verte, pero no sé si voy a ir",
-            "Боже мой, Боже мой, Боже мой, Боже мой!",
+            "Боже мой, Боже мой, Боже мой!",
             "Пошёл нахуй, пошёл нахуй, пошёл нахуй.",
             "Vete a la mierda, vete a la mierda, vete a la mierda.",
         ):
