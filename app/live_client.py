@@ -27,6 +27,11 @@ import numpy as np
 SR_ASR = 16000
 SR_TTS = 24000
 
+# Версия протокола GUI <-> движок. Должна совпадать с PROTOCOL_VERSION в
+# tools/live_translate.py: иначе рядом со сборкой работает старый движок
+# (после обновления EXE он мог остаться запущенным), и правки не доезжают.
+PROTOCOL_VERSION = 3
+
 
 class LiveTranslator:
     """Управление процессом движка и воспроизведение ответа."""
@@ -242,6 +247,12 @@ class LiveTranslator:
             elif kind == "done":
                 self.busy = False
                 self.on_event("done", msg)
+            elif kind == "boot":
+                # версия протокола движка: GUI предупредит о расхождении
+                self.on_event("boot", msg)
+            elif kind in ("phrase_timing", "peer_skip"):
+                # тайминги фразы и причины «фраза была — перевода нет»
+                self.on_event(kind, msg)
             elif kind == "peer_text":
                 # чужой игрок: оригинал + перевод на русский
                 self.on_event("peer_text", msg)

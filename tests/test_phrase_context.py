@@ -79,9 +79,10 @@ class PeerPartJoinTests(unittest.TestCase):
     def test_queued_part_keeps_last_flag(self) -> None:
         self.engine.push_peer_pcm(b"\x00\x00" * 10, 16000, last=False)
         item = self.engine._peer_q.get_nowait()
-        self.assertEqual(len(item), 5)
+        self.assertEqual(len(item), 6)
         self.assertFalse(item[3])
         self.assertIsNone(item[4])
+        self.assertGreater(item[5], 0)  # время прихода — для строки таймингов
 
     def test_queued_part_keeps_phrase_number(self) -> None:
         self.engine.push_peer_pcm(b"\x00\x00" * 10, 16000,

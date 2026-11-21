@@ -232,6 +232,8 @@ class LiveEngine(QObject):
         self._metrics: dict = {}
         self._dropped = 0
         self._cancelled = 0
+        # Последние строки таймингов фраз (для отчёта и диагностики).
+        self._timings: list[str] = []
         # накопление для промежуточного распознавания
         self._peer_acc = 0.0
         self._peer_partial_acc = 0.0
@@ -1883,7 +1885,63 @@ class LiveEngine(QObject):
     # СОБЫТИЯ ОТ ДВИЖКА
     # ==================================================================
     def _on_event(self, kind: str, data) -> None:
-        if kind == "chunk":
+        if kind == "boot":
+            proto = data.get("protocol")
+            try:
+                ok = int(proto) == int(lc.PROTOCOL_VERSION)
+            except (TypeError, ValueError):
+                ok = False
+            self._metrics["protocol"] = proto
+            self._metrics["protocol_ok"] = "да" if ok else "НЕТ"
+            if ok:
+                self._metrics.pop("protocol_desync", None)
+                self.logLine.emit(
+                    f"движок: протокол {proto} (совпадает с приложением)")
+            else:
+                self._metrics["protocol_desync"] = (
+                    f"движок {proto}, приложение {lc.PROTOCOL_VERSION}")
+                self.errorMessage.emit(
+                    "движок от другой сборки (протокол "
+                    f"{proto}, ожидается {lc.PROTOCOL_VERSION}) — "
+                    "остановите и запустите движок заново")
+            self.metricsChanged.emit()
+        elif kind == "peer_skip":
+            counts = data.get("counts") or {}
+            try:
+                summary = ", ".join(f"{k}: {v}" for k, v in counts.items()
+                                    if v)
+            except Exception:
+                summary = ""
+            self._metrics["skipped"] = summary or "—"
+            label = str(data.get("label") or data.get("reason") or "")
+            detail = str(data.get("detail") or "")
+            self.logLine.emit("фраза без перевода: " + label
+                             + (f" ({detail})" if detail else ""))
+            self.metricsChanged.emit()
+        elif kind == "phrase_timing":
+            fields = ("wait_ms", "asr_ms", "mt_ms", "gate_ms",
+                      "first_ms", "tts_ms", "total_ms")
+            parts = [f"{key}={data[key]}" for key in fields
+                     if data.get(key) is not None]
+            line = ("вх " if data.get("dir") == "in" else "исх ") \
+                + (" ".join(parts) or "нет данных")
+            self._timings.append(line)
+            del self._timings[:-10]
+            self._metrics["timing"] = line
+            self.metricsChanged.emit()
+            try:
+                import json
+                import time
+                logs = os.path.join(sp.workspace(), "logs")
+                os.makedirs(logs, exist_ok=True)
+                with open(os.path.join(logs, "diagnostics.log"), "a",
+                          encoding="utf-8") as fh:
+                    fh.write(json.dumps({"ts": time.strftime(
+                        "%Y-%m-%d %H:%M:%S"), "phrase": dict(data)},
+                        ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+        elif kind == "chunk":
             try:
                 pcm = lc.pcm_to_float16(base64.b64decode(data["pcm"]))
                 self._emit_audio(pcm)
@@ -2145,8 +2203,14 @@ class LiveEngine(QObject):
         self.modeChanged.emit()
 
     def _apply_metrics(self, data) -> None:
-        """Метрики реплики: в UI (последние) и в диагностический лог."""
-        self._metrics = {k: v for k, v in data.items() if k != "event"}
+        """Метрики реплики: в UI (последние) и в диагностический лог.
+
+        Сливаем с предыдущими, а не заменяем: протокол, счётчики отказов
+        и строку таймингов не должно стирать очередное событие метрик.
+        """
+        merged = dict(self._metrics)
+        merged.update({k: v for k, v in data.items() if k != "event"})
+        self._metrics = merged
         try:
             self._dropped = int(data.get("dropped", self._dropped) or 0)
             self._cancelled = int(data.get("cancelled", self._cancelled) or 0)

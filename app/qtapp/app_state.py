@@ -746,6 +746,16 @@ class AppState(QObject):
                                   "total_ms", "queue", "dropped")]
                 if parts:
                     lines.append("последняя реплика: " + ", ".join(parts))
+            # Пакет подтверждения: версия протокола движка, причины
+            # «фраза была — перевода нет» и тайминги последней фразы.
+            for key, label in (
+                    ("protocol", "протокол движка"),
+                    ("protocol_desync", "протокол: РАСХОЖДЕНИЕ"),
+                    ("skipped", "фразы без перевода"),
+                    ("timing", "тайминги фразы")):
+                value = metrics.get(key)
+                if value not in (None, ""):
+                    lines.append(f"{label}: {value}")
         return "\n".join(lines)
 
     @Slot()

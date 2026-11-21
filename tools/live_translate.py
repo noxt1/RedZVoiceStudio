@@ -165,6 +165,24 @@ MT_BEAMS_FORWARD = max(1, int(os.environ.get("REDZ_MT_BEAMS_FORWARD", "1")))
 PEER_PARTS_TTL = max(1.0, float(os.environ.get("REDZ_PEER_PARTS_TTL", "8")))
 PEER_PARTS_MAX_BYTES = int(os.environ.get("REDZ_PEER_PARTS_MAX", "2000000"))
 
+# Версия протокола GUI <-> движок. Меняется при любом изменении полей
+# команд/событий: GUI сравнивает её с boot-событием и предупреждает,
+# если рядом работает движок от другой сборки (частый случай — старый
+# процесс движка после обновления EXE: фиксы не доезжают, а ошибок нет).
+PROTOCOL_VERSION = 3
+
+# Почему фраза собеседника осталась без перевода (счётчики для отчёта).
+SKIP_REASONS = {
+    "empty": "распознавание пустое",
+    "no_speech": "тишина/шум",
+    "hallucination": "фильтр галлюцинаций",
+    "lang": "язык не подтверждён",
+    "no_mt": "нет модели перевода",
+    "empty_ru": "перевод пустой",
+    "own_voice": "свой голос (эхо в захвате)",
+    "duplicate": "повтор уже переведённой фразы",
+}
+
 
 def _hf_hub_dir() -> str:
     """Каталог кэша HuggingFace (оттуда движок берёт модели)."""
@@ -434,8 +452,11 @@ class _TtsGate:
         self._cond = threading.Condition()
         self._busy = False
         self._waiting = [0, 0]
+        # Сколько последний acquire ждал — по потоку, для строки таймингов.
+        self._tls = threading.local()
 
     def acquire(self, priority: int = PRIO_OUT) -> None:
+        t0 = time.perf_counter()
         with self._cond:
             self._waiting[priority] += 1
             try:
@@ -445,6 +466,12 @@ class _TtsGate:
                 self._busy = True
             finally:
                 self._waiting[priority] -= 1
+        self._tls.wait_ms = int((time.perf_counter() - t0) * 1000)
+
+    @property
+    def wait_ms(self) -> int:
+        """Сколько ТЕКУЩИЙ поток ждал замок при последнем захвате."""
+        return int(getattr(self._tls, "wait_ms", 0))
 
     def release(self) -> None:
         with self._cond:
@@ -558,6 +585,12 @@ class Engine:
         self._peer_seq = 0
         self.dropped = 0
         self.cancelled = 0
+        # Фразы, которые были, но остались без перевода: причина -> счётчик.
+        self.skipped: dict[str, int] = {key: 0 for key in SKIP_REASONS}
+        # Причина последнего пустого результата transcribe_peer (для счётчиков).
+        self._asr_skip = ""
+        # Ожидают озвучки: тайминги ASR/MT для строки «фраза целиком».
+        self._pending_timings: list[dict] = []
         self.diagnostics = None
         # Последнее, что мы САМИ сказали в игру — по нему отсекаем
         # собственный голос, попавший в перехват из наушников.
@@ -693,10 +726,22 @@ class Engine:
             "queues": {"peer": self._peer_q.qsize()},
             "dropped": self.dropped,
             "cancelled": self.cancelled,
+            "skipped": dict(self.skipped),
+            "protocol": PROTOCOL_VERSION,
             "gen": self.gen,
             "mode": self.mode,
             "loaded": self.loaded,
         }
+
+    def _peer_skip(self, reason: str, detail: str = "") -> None:
+        """Учесть фразу, которая была, но осталась без перевода."""
+        reason = reason if reason in SKIP_REASONS else "empty"
+        self.skipped[reason] = self.skipped.get(reason, 0) + 1
+        log(f"[engine] фраза без перевода: {SKIP_REASONS[reason]}"
+            f" ({detail or '—'}; всего {self.skipped[reason]})")
+        emit({"event": "peer_skip", "reason": reason,
+              "label": SKIP_REASONS[reason], "detail": detail,
+              "counts": dict(self.skipped)})
 
     def _bump_gen(self, reason: str) -> None:
         """Новое поколение результатов: старые уже не нужны."""
@@ -1750,7 +1795,7 @@ class Engine:
         if not pcm_bytes:
             return False
         item = (pcm_bytes, sr, bool(partial), bool(last),
-                None if phrase is None else int(phrase))
+                None if phrase is None else int(phrase), time.time())
         try:
             self._peer_q.put_nowait(item)
         except queue.Full:
@@ -1830,6 +1875,7 @@ class Engine:
             partial = bool(item[2]) if len(item) > 2 else False
             last = bool(item[3]) if len(item) > 3 else True
             phrase = item[4] if len(item) > 4 else None
+            arrival = float(item[5]) if len(item) > 5 else time.time()
             if not partial:
                 joined = self._join_peer_parts(pcm, last, phrase)
                 if joined is None:
@@ -1846,6 +1892,9 @@ class Engine:
                         "модели) — отброшен")
                     continue
                 if not text:
+                    if not partial:
+                        self._peer_skip(self._asr_skip or "empty",
+                                        f"{len(pcm) / (2 * max(1, sr)):.1f} с")
                     continue
                 if partial:
                     # Промежуточный текст: только для показа, без перевода.
@@ -1855,12 +1904,14 @@ class Engine:
                           "seq": self._peer_seq, "asr_ms": asr_ms})
                     continue
                 if self._is_own_voice(text):
+                    self._peer_skip("own_voice", text[:40])
                     log(f"[engine] перехват: это наш собственный голос, "
                         f"пропускаю ({text!r})")
                     continue
                 key = " ".join(text.lower().split())
                 if key and key == self._last_translated:
                     self.cancelled += 1
+                    self._peer_skip("duplicate", key[:40])
                     log("[engine] та же фраза уже переведена — пропускаю")
                     continue
                 self._last_translated = key
@@ -1870,6 +1921,7 @@ class Engine:
                     if self.auto_download and self.download_package(lang):
                         log(f"[engine] пакет {lang}->ru готов, продолжаю фразу")
                     else:
+                        self._peer_skip("no_mt", f"{lang}->ru")
                         # Не подменяем перевод английским текстом: лучше явно
                         # сказать, что для направления нет модели.
                         log(f"[engine] перехват {lang}->ru: нет модели перевода")
@@ -1884,6 +1936,18 @@ class Engine:
                     self.cancelled += 1
                     log("[engine] перевод устарел — отброшен")
                     continue
+                if not (ru or "").strip():
+                    self._peer_skip("empty_ru", f"{lang}: {text[:40]}")
+                # Озвучку закажет GUI; к этому моменту известны ASR/MT —
+                # сохраняем их, чтобы строка «фраза целиком» содержала все этапы.
+                self._pending_timings.append({
+                    "ru": ru, "lang": lang,
+                    "arrival": arrival,
+                    "wait_ms": max(0, int((t0 - arrival) * 1000)),
+                    "asr_ms": asr_ms, "mt_ms": mt_ms,
+                })
+                if len(self._pending_timings) > 8:
+                    self._pending_timings.pop(0)
                 emit({"event": "peer_text", "src": text, "ru": ru,
                       "lang": lang, "asr_ms": asr_ms, "mt_ms": mt_ms,
                       "total_ms": int((time.time() - t0) * 1000),
@@ -1945,6 +2009,7 @@ class Engine:
         peak = float(np.abs(audio).max()) if audio.size else 0.0
         if peak > 1e-4:
             audio = audio / peak * 0.7
+        self._asr_skip = ""
         lang = None if self.peer_lang == "auto" else self.peer_lang
         segs, info = self.asr.transcribe(
             audio, language=lang,
@@ -1953,14 +2018,20 @@ class Engine:
             no_speech_threshold=0.6, log_prob_threshold=-1.0)
         items = list(segs)
         if not items:
+            self._asr_skip = "no_speech"
             return "", self.peer_lang
         speech = [s for s in items
                   if getattr(s, "no_speech_prob", 0.0) < 0.6
                   and getattr(s, "avg_logprob", -1.0) > -1.2]
         if not speech:
+            self._asr_skip = "no_speech"
             return "", self.peer_lang
         text = " ".join(s.text.strip() for s in speech).strip()
-        if not text or is_hallucination(text):
+        if not text:
+            self._asr_skip = "empty"
+            return "", self.peer_lang
+        if is_hallucination(text):
+            self._asr_skip = "hallucination"
             return "", self.peer_lang
         if partial:
             return text, self.peer_lang_confirmed or (
@@ -1975,6 +2046,7 @@ class Engine:
             return text, self.peer_lang
         accepted, reason = self._detect_peer_lang(detected, prob, dur, words)
         if not accepted:
+            self._asr_skip = "lang"
             log(f"[engine] язык собеседника не подтверждён ({reason}) — "
                 f"фразу не перевожу")
             return "", self.peer_lang
@@ -2093,6 +2165,27 @@ class Engine:
         pcm = (np.clip(part, -1.0, 1.0) * 32767).astype(np.int16)
         emit({"event": "chunk", "seq": seq,
               "pcm": base64.b64encode(pcm.tobytes()).decode("ascii")})
+
+    def _log_phrase(self, **fields) -> None:
+        """Одна строка таймингов фразы — в лог и в отчёт.
+
+        Поля: dir (in/out), seq, lang, wait_ms (очередь до ASR), asr_ms,
+        mt_ms, gate_ms (ожидание замка XTTS), first_ms (первый чанк),
+        tts_ms (синтез целиком), total_ms (от конца речи до последнего чанка).
+        """
+        parts = [f"{k}={v}" for k, v in fields.items() if v is not None]
+        log("[phrase] " + " ".join(parts))
+        emit({"event": "phrase_timing", **fields})
+
+    def _take_phrase_timing(self, text: str) -> dict:
+        """Тайминги ASR/MT именно этой фразы (сверху очереди ожидания)."""
+        if not self._pending_timings:
+            return {}
+        info = self._pending_timings[0]
+        if (info.get("ru") or "").strip() != (text or "").strip():
+            return {}
+        self._pending_timings.pop(0)
+        return info
 
     def _emit_incoming_chunk(self, part: np.ndarray, seq: int) -> None:
         """Отдать кусок входящего аудио в GUI (base64 int16, 24 кГц).
@@ -2229,6 +2322,10 @@ class Engine:
                 pass
             for part in np.array_split(audio, max(1, len(audio) // 12000)):
                 self._emit_chunk(part, seq)
+        total_ms = int((time.time() - t0) * 1000)
+        self._log_phrase(dir="out", seq=seq, gate_ms=self.lock.wait_ms,
+                         first_ms=total_ms, tts_ms=total_ms,
+                         total_ms=total_ms)
         emit({"event": "done", "seq": seq, "ms": int((time.time() - t0) * 1000)})
 
     def _stream_speak(self, spoken: str, params: dict, seq: int,
@@ -2240,6 +2337,7 @@ class Engine:
         Quality/Manual, где задержка не главное.
         """
         t0 = time.time()
+        first_ms = None
         try:
             import torch
             # Вариативный seed: фиксированный 1234 давал монотонность.
@@ -2254,9 +2352,15 @@ class Engine:
                         spoken, xtts_language(tts_code), self.gpt_latent,
                         self.spk_emb, stream_chunk_size=self.stream_chunk,
                         overlap_wav_len=2048, **params):
+                    if first_ms is None:
+                        first_ms = int((time.time() - t0) * 1000)
                     self._emit_chunk(c.detach().cpu().numpy(), seq)
         except Exception as exc:
             log(f"[engine] синтез не удался: {type(exc).__name__}: {exc}")
+        total_ms = int((time.time() - t0) * 1000)
+        self._log_phrase(dir="out", seq=seq, gate_ms=self.lock.wait_ms,
+                         first_ms=first_ms, tts_ms=total_ms,
+                         total_ms=total_ms)
         emit({"event": "done", "seq": seq,
               "ms": int((time.time() - t0) * 1000)})
 
@@ -2325,6 +2429,7 @@ class Engine:
         t0 = time.time()
         gen = self.gen
         first_ms = None
+        info = self._take_phrase_timing(text)
         try:
             import torch
             # ВАРИАТИВНЫЙ seed: с фиксированным 1234 каждая фраза звучала
@@ -2360,8 +2465,17 @@ class Engine:
         except Exception as exc:  # noqa: BLE001
             log(f"[engine] синтез входящего не удался: "
                 f"{type(exc).__name__}: {exc}")
-        emit({"event": "incoming_done", "seq": seq,
-              "ms": int((time.time() - t0) * 1000)})
+        tts_ms = int((time.time() - t0) * 1000)
+        total_ms = tts_ms
+        if info.get("arrival"):
+            # «фраза целиком»: от получения последнего куска речи
+            total_ms = int((time.time() - info["arrival"]) * 1000)
+        self._log_phrase(dir="in", seq=seq, lang=info.get("lang"),
+                         wait_ms=info.get("wait_ms"),
+                         asr_ms=info.get("asr_ms"), mt_ms=info.get("mt_ms"),
+                         gate_ms=self.lock.wait_ms, first_ms=first_ms,
+                         tts_ms=tts_ms, total_ms=total_ms)
+        emit({"event": "incoming_done", "seq": seq, "ms": tts_ms})
 
 
 def main() -> None:
@@ -2385,8 +2499,10 @@ def main() -> None:
     except Exception as exc:
         print(f"не удалось создать лог: {exc}", file=sys.stderr, flush=True)
 
-    log(f"[engine] старт: reference={reference}")
-    emit({"event": "boot"})
+    log(f"[engine] старт: reference={reference}, протокол {PROTOCOL_VERSION}")
+    # protocol — чтобы GUI заметил движок от другой сборки и предупредил.
+    emit({"event": "boot", "protocol": PROTOCOL_VERSION,
+          "pid": os.getpid()})
 
     def refresh_catalog_job() -> None:
         """Обновить каталог HuggingFace в фоне (сеть, без блокировки IPC)."""
