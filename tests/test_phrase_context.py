@@ -22,6 +22,7 @@ import os
 import sys
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -279,6 +280,80 @@ class IncomingQueueTests(unittest.TestCase):
         self.assertIn("третья", pending)
         self.assertIn("четвёртая", pending)
         self.assertLessEqual(len(self.engine._incoming_jobs), 3)
+
+
+class _FakeTensor:
+    """Минимум от тензора torch для _synthesize_incoming."""
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return np.zeros(240, dtype=np.float32)
+
+
+class _FakeTts:
+    """XTTS-заглушка: долгий синтез из нескольких чанков."""
+
+    def inference_stream(self, *args, **kwargs):
+        for _ in range(5):
+            time.sleep(0.1)
+            yield _FakeTensor()
+
+
+class TtsPriorityTests(unittest.TestCase):
+    """Своя речь (PTT) не ждёт очередь входящих фраз на одном XTTS."""
+
+    def setUp(self) -> None:
+        self.engine = live_translate.Engine()
+        self.order: list[str] = []
+        gate = self.engine.lock
+        self.assertIsInstance(gate, live_translate._TtsGate)
+        orig_acquire = gate.acquire
+
+        def spy(priority=live_translate._TtsGate.PRIO_OUT):
+            orig_acquire(priority)
+            self.order.append(threading.current_thread().name)
+
+        gate.acquire = spy  # type: ignore[method-assign]
+        self.engine.tts = _FakeTts()
+        self.engine.gpt_latent = None
+        self.engine.spk_emb = None
+
+    def _wait_acquired(self, name: str, timeout: float = 3.0) -> None:
+        deadline = time.time() + timeout
+        while name not in self.order and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertIn(name, self.order, f"{name} не получил XTTS: {self.order}")
+
+    def _outgoing(self) -> None:
+        """Как _stream_speak/_synth_full: обычный `with self.lock`."""
+        with self.engine.lock:
+            pass
+
+    def test_outgoing_preempts_queued_incoming(self) -> None:
+        torch_stub = types.ModuleType("torch")
+        torch_stub.manual_seed = lambda seed: None
+        with mock.patch.dict(sys.modules, {"torch": torch_stub}):
+            first = threading.Thread(target=self.engine._synthesize_incoming,
+                                     args=("первая фраза", 1), name="in1")
+            first.start()
+            self._wait_acquired("in1")
+            second = threading.Thread(target=self.engine._synthesize_incoming,
+                                      args=("вторая фраза", 2), name="in2")
+            second.start()
+            time.sleep(0.1)          # вторая входящая уже ждёт
+            out = threading.Thread(target=self._outgoing, name="out")
+            out.start()
+            for thread in (first, second, out):
+                thread.join(5)
+        self.assertFalse(any(t.is_alive() for t in (first, second, out)),
+                         "синтез завис на замке")
+        self.assertEqual(self.order, ["in1", "out", "in2"],
+                         f"исходящий встал за очередью входящих: {self.order}")
 
 
 if __name__ == "__main__":

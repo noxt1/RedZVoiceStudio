@@ -394,6 +394,77 @@ def log(msg: str) -> None:
             pass
 
 
+class _TtsHold:
+    """Захват защёлки XTTS на время блока (для `with`)."""
+
+    def __init__(self, gate: "_TtsGate", priority: int) -> None:
+        self._gate = gate
+        self._priority = priority
+
+    def __enter__(self) -> "_TtsHold":
+        self._gate.acquire(self._priority)
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self._gate.release()
+        return False
+
+
+class _TtsGate:
+    """Защёлка XTTS с приоритетом: своя речь не ждёт очередь входящих фраз.
+
+    XTTS — одна модель в памяти и не потокобезопасна, поэтому синтез всё
+    равно идёт по одному. Но входящая (русская) озвучка обрабатывается
+    очередью из нескольких фраз, и обычный `threading.Lock` не гарантирует
+    порядок: после освобождения замка следующая входящая фраза могла
+    проскочить раньше исходящего перевода, и своя речь ждала ещё несколько
+    фраз.
+
+    Здесь ожидающие делятся на два класса: PRIO_OUT — исходящий перевод
+    (то, что сказал пользователь) и пересборка голоса; PRIO_IN — входящая
+    озвучка в наушники. Входящая не захватывает замок, пока ждёт хоть один
+    исходящий. Ждать приходится только остаток фразы, которая уже
+    синтезируется, а не всю очередь.
+    """
+
+    PRIO_OUT = 0
+    PRIO_IN = 1
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._busy = False
+        self._waiting = [0, 0]
+
+    def acquire(self, priority: int = PRIO_OUT) -> None:
+        with self._cond:
+            self._waiting[priority] += 1
+            try:
+                while self._busy or any(self._waiting[p]
+                                        for p in range(priority)):
+                    self._cond.wait()
+                self._busy = True
+            finally:
+                self._waiting[priority] -= 1
+
+    def release(self) -> None:
+        with self._cond:
+            self._busy = False
+            self._cond.notify_all()
+
+    def hold(self, priority: int = PRIO_IN) -> _TtsHold:
+        """Захватить замок на время блока с указанным приоритетом."""
+        return _TtsHold(self, priority)
+
+    def __enter__(self) -> "_TtsGate":
+        # Обычный `with self.lock` — это исходящий синтез/пересборка голоса.
+        self.acquire(self.PRIO_OUT)
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.release()
+        return False
+
+
 class Engine:
     """Модели и логика перевода. Загружаются один раз и живут в памяти."""
 
@@ -406,7 +477,9 @@ class Engine:
         self.tts = None
         self.gpt_latent = None
         self.spk_emb = None
-        self.lock = threading.Lock()
+        # XTTS один на оба направления; замок с приоритетом, чтобы
+        # исходящий перевод не стоял за очередью входящих фраз.
+        self.lock = _TtsGate()
         self.load_ms = 0
         # Уровень живости (0 — ровно, 3 — максимум). Пользователь задаёт
         # ползунком; тон фразы сдвигает параметры поверх него.
@@ -2262,7 +2335,9 @@ class Engine:
             torch.manual_seed(seed)
             # Параметры для живости: чуть выше temperature (0.78) даёт
             # интонационное разнообразие, но не «кашу» (потолок 0.82).
-            with self.lock:
+            # Входящая озвучка — низкий приоритет: если пользователь начал
+            # говорить, исходящий синтез пройдёт раньше следующей фразы.
+            with self.lock.hold(_TtsGate.PRIO_IN):
                 for c in self.tts.inference_stream(
                         text, "ru", self.gpt_latent, self.spk_emb,
                         stream_chunk_size=self.stream_chunk,
