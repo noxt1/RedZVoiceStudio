@@ -136,7 +136,7 @@ STOPPED ──start──► LOADING ──ready──► READY ──stop──
 | `AppState._vram_timer` | GUI | `nvidia-smi` раз в 4 с |
 
 Очередь перевода: `self._queue` + `_queue_lock`, отправка по одной
-(`translator.busy`), длинная фраза режется по 14 с (MAX_SEG).
+(`translator.busy`), длинная фраза режется по 10 с (MAX_SEG).
 
 ## 6. Аудио
 
