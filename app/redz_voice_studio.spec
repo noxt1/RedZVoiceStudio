@@ -26,6 +26,9 @@ for src, dest in (
     (os.path.join(ROOT, "voices"), "voices"),
     (os.path.join(ROOT, "tools"), "tools"),
     (os.path.join(ROOT, "installers"), "installers"),
+    # Qt/QML-интерфейс: qml/main.qml, qml/RedZ (компоненты + иконки), qml/pages
+    (os.path.join(ROOT, "app", "qtapp", "qml"), "qtapp/qml"),
+    (os.path.join(ROOT, "app", "studio.ico"), "."),
     # файлы ресурса для установки на сервер RedZ/FiveM
     (os.path.join(ROOT, "fxmanifest.lua"), "."),
     (os.path.join(ROOT, "client.lua"), "."),
@@ -44,7 +47,10 @@ for src, dest in (
             # Поэтому назначение — папка, а полное имя файла задаёт basename.
             files = []
             for dirpath, dirnames, filenames in os.walk(src):
-                dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+                # archive/ — одноразовые скрипты и закрытые исследования:
+                # лежат в репозитории, но в бандл не едут.
+                dirnames[:] = [d for d in dirnames
+                               if d not in ("__pycache__", "archive")]
                 for fn in filenames:
                     full = os.path.join(dirpath, fn)
                     rel = os.path.relpath(full, src)
@@ -74,11 +80,46 @@ hiddenimports = [
     "mic_bridge",
     "scrollframe",
     "cable",
+    "incoming_tts",
+    "wasapi_loopback",
+    "prompt_library",
+    "voice_prompts",
+    "acoustic",
+    "audiodev",
+    "default_mic",
     "sounddevice",
     "soundfile",
     "numpy",
     "tkinter",
     "tkinter.ttk",
+    "tkinter.simpledialog",
+    "tkinter.messagebox",
+    "ui.main_window",
+    "ui.home",
+    "ui.voices",
+    "ui.settings",
+    "ui.history",
+    "ui.splash",
+    "ui.audio_play",
+    "ui.dark_table",
+    "ui.glass_card",
+    "ui.theme",
+    "ui.navigation",
+    "ui.sidebar",
+    "ui.status_panel",
+    # Qt-интерфейс (PySide6 + QML)
+    "qtapp",
+    "qtapp.main",
+    "qtapp.app_state",
+    "qtapp.live_engine",
+    "qtapp.audio_diag",
+    "qtapp.voice_controller",
+    "qtapp.models",
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtSvg",
 ]
 
 # espeak-данные нужны Piper, если он запускается из движка

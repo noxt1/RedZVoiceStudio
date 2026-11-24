@@ -160,17 +160,49 @@ def vk_of(combo: str) -> int:
     return VK_CODES.get(name.lower(), 0) if name else 0
 
 
+def combo_pressed(combo: str) -> bool:
+    """Нажата ли комбинация ПРЯМО СЕЙЧАС (для отпускания PTT).
+
+    Windows присылает WM_HOTKEY только на нажатие, поэтому отпускание
+    определяем опросом GetAsyncKeyState: сама клавиша и все модификаторы
+    должны быть физически зажаты.
+    """
+    key, mods = parse_combo(combo)
+    vk = VK_CODES.get((key or "").lower(), 0)
+    if not vk:
+        return False
+    try:
+        user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+        down = lambda code: bool(user32.GetAsyncKeyState(code) & 0x8000)
+    except Exception:
+        return False
+    if not down(vk):
+        return False
+    for flag, code in ((MOD_ALT, 0x12), (MOD_CONTROL, 0x11),
+                       (MOD_SHIFT, 0x10), (0x0008, 0x5B)):
+        if mods & flag and not down(code):
+            return False
+    return True
+
+
 def pretty_combo(combo: str) -> str:
     """'ctrl+alt+g' -> 'Ctrl+Alt+G'."""
     if not combo:
         return "—"
     names = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win",
              "space": "Пробел", "enter": "Enter", "tab": "Tab",
-             "escape": "Esc", "backspace": "Backspace"}
+             "escape": "Esc", "backspace": "Backspace",
+             "capslock": "CapsLock", "insert": "Insert", "delete": "Delete",
+             "home": "Home", "end": "End", "pageup": "PageUp",
+             "pagedown": "PageDown", "printscreen": "PrintScreen"}
     parts = []
     for p in combo.split("+"):
         low = p.lower()
-        parts.append(names.get(low, low.upper() if len(low) == 1 else low))
+        label = names.get(low)
+        if label is None:
+            label = low.upper() if len(low) <= 2 or low.startswith("f") and low[1:].isdigit() else low
+        parts.append(label)
     return "+".join(parts)
 
 

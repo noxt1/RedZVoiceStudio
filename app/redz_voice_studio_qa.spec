@@ -31,7 +31,10 @@ for src, dest in (
     (os.path.join(ROOT, "player"), "player"),
     (os.path.join(ROOT, "voices"), "voices"),
     (os.path.join(ROOT, "tools"), "tools"),
-    (os.path.join(ROOT, "installers"), "installers"),
+    # VBCable installers НЕ входят в поставку по лицензии.
+    # Пользователь устанавливает виртуальный кабель отдельно по мануалу
+    # при необходимости (запасной вариант для захвата аудио).
+    # (os.path.join(ROOT, "installers"), "installers"),
     (os.path.join(ROOT, "fxmanifest.lua"), "."),
     (os.path.join(ROOT, "client.lua"), "."),
     (os.path.join(ROOT, "keybinds.lua"), "."),
@@ -87,12 +90,22 @@ hiddenimports = [
     "cable",
     "incoming_tts",          # P1: IncomingTTSProvider
     "western_style",         # Этап B: Western Style Engine
+    "voice_prompts",         # C.7.8: звуковые подсказки для записи голоса
+    "prompt_library",        # готовые референсы интонации (voices/prompts)
+    "ui.voices",             # новая вкладка «Голоса» (3 под-вкладки)
+    "ui.audio_play",         # воспроизведение и сравнение образцов
     "sounddevice",
     "soundfile",
     "numpy",
     "tkinter",
     "tkinter.ttk",
     "pyaudiowpatch",         # Этап A1: WASAPI Endpoint Loopback
+    # Piper — для озвучки подсказок (эмоции). Без него «Как сказать»
+    # не работает в EXE.
+    "piper",
+    "piper.voice",
+    "piper.config",
+    "piper.phonemize_espeak",
 ]
 
 # espeak-данные нужны Piper, если он запускается из движка
@@ -114,6 +127,24 @@ try:
             print(">>> data: pyaudiowpatch/__init__.py -> pyaudiowpatch")
 except ImportError:
     print(">>> WARNING: pyaudiowpatch not installed, WASAPI Loopback will not work in frozen EXE")
+
+# Включаем пакет piper (озвучка подсказок с интонацией).
+# Без него кнопка «▶ Как сказать» в EXE пишет «Piper недоступен».
+try:
+    import piper
+    piper_dir = os.path.dirname(piper.__file__)
+    if piper_dir and os.path.isdir(piper_dir):
+        for dirpath, dirnames, filenames in os.walk(piper_dir):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            for fn in filenames:
+                if fn.endswith((".py", ".json", ".txt", ".onnx")):
+                    full = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(full, piper_dir)
+                    dest_dir = os.path.join("piper", os.path.dirname(rel))
+                    datas.append((full, dest_dir))
+        print(">>> data: piper -> piper")
+except ImportError:
+    print(">>> WARNING: piper not installed, подсказки работать не будут")
 
 a = Analysis(
     [entry],

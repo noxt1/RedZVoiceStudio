@@ -1,7 +1,8 @@
 """Навигация по трём разделам: Главная / Голоса / Настройки.
 
 Соответствует утверждённому дизайну (ui_visual_tokens.json):
-- боковая панель width ~204px, bg SURFACE_1 / SIDEBAR_BG
+- боковая панель width ~220px, bg SIDEBAR_BG
+- логотип приложения вверху
 - активная секция подсветка border_focus
 - три основных раздела + история внизу
 """
@@ -25,11 +26,12 @@ class Navigation(tk.Frame):
     Возвращает выбранный раздел через callback `on_select(section_name)`.
     """
 
-    def __init__(self, master, on_select, **kwargs):
-        super().__init__(master, bg=SIDEBAR_BG, **kwargs)
+    def __init__(self, master, on_select, width=220, **kwargs):
+        super().__init__(master, bg=SIDEBAR_BG, width=width, **kwargs)
         self._on_select = on_select
         self._active = None
         self._buttons = {}
+        self.pack_propagate(False)
 
         # Логотип / название приложения
         self._build_header()
@@ -54,12 +56,10 @@ class Navigation(tk.Frame):
 
         tk.Label(
             header, text="RedZ", bg=SIDEBAR_BG, fg=ACCENT,
-            font=FONT_APP_TITLE, anchor="w").pack(
-                side="left")
+            font=FONT_APP_TITLE, anchor="w").pack(side="left")
         tk.Label(
             header, text="Voice Studio", bg=SIDEBAR_BG, fg=TEXT_PRIMARY,
-            font=FONT_H2, anchor="w").pack(
-                side="left", padx=(2, 0))
+            font=FONT_H2, anchor="w").pack(side="left", padx=(2, 0))
 
     def _build_section(self, name: str, icon: str):
         btn = tk.Button(

@@ -1,4 +1,4 @@
-"""Пути, рабочая папка и поиск движка для RedZ Voice Studio.
+"""Пути, рабочая папка и поиск движка для Auraloom.
 
 Приложение работает и как EXE, и из исходников. Всё состояние лежит в
 %LOCALAPPDATA%\\RedZVoiceStudio\\workspace, чтобы не зависеть от того,
@@ -11,7 +11,12 @@ import os
 import sys
 import time
 
-APP_NAME = "RedZVoiceStudio"
+import branding
+
+# Папка данных берётся из branding.py: при ребрендинге меняется одно имя,
+# а существующая папка переименовывается (ниже), чтобы не потерять модели
+# и настройки.
+APP_NAME = branding.DATA_DIR
 PIPER_VOICES = {
     "M": ("es_MX-ald-medium.onnx", "es_MX-ald-medium.onnx.json"),
     "F": ("es_MX-claude-high.onnx", "es_MX-claude-high.onnx.json"),
@@ -73,7 +78,29 @@ def app_dir() -> str:
 
 def local_app_data() -> str:
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(base, APP_NAME)
+    return _migrate_data_dir(base, os.path.join(base, APP_NAME))
+
+
+def _migrate_data_dir(base: str, target: str) -> str:
+    """Переименовать старую папку данных после смены названия.
+
+    Возвращает папку, в которой реально надо работать. Если переименование
+    не удалось (Windows держит файлы — запущен движок), возвращаем старую
+    папку: иначе приложение стартовало бы с пустым workspace и «потеряло»
+    модели и настройки.
+    """
+    if os.path.isdir(target):
+        return target
+    for old in getattr(branding, "LEGACY_DATA_DIRS", ()) or ():
+        src = os.path.join(base, old)
+        if not os.path.isdir(src):
+            continue
+        try:
+            os.replace(src, target)
+            return target
+        except Exception:
+            return src
+    return target
 
 
 def workspace() -> str:
@@ -172,6 +199,31 @@ def seed_workspace() -> None:
             if os.path.exists(src_f):
                 _safe_copy(src_f, os.path.join(voices_dir, fname))
 
+    # Готовые звуковые подсказки (образцы интонации) — уже записанные
+    # WAV из voices/prompts. Копируются в рабочую папку, чтобы их
+    # можно было слушать и из EXE, и из исходников.
+    prompts_src = os.path.join(src, "voices", "prompts")
+    prompts_dst = os.path.join(voices_dir, "prompts")
+    if os.path.isdir(prompts_src):
+        os.makedirs(prompts_dst, exist_ok=True)
+        for fname in os.listdir(prompts_src):
+            s = os.path.join(prompts_src, fname)
+            if not os.path.isfile(s):
+                continue
+            d = os.path.join(prompts_dst, fname)
+            if (not os.path.exists(d)
+                    or os.path.getsize(s) != os.path.getsize(d)):
+                _safe_copy(s, d)
+    else:
+        # В бандле PyInstaller путь может быть voices/prompts сразу в корне
+        alt = os.path.join(src, "prompts")
+        if os.path.isdir(alt):
+            os.makedirs(prompts_dst, exist_ok=True)
+            for fname in os.listdir(alt):
+                s = os.path.join(alt, fname)
+                if os.path.isfile(s):
+                    _safe_copy(s, os.path.join(prompts_dst, fname))
+
 
 def tool_path(name: str) -> str:
     """Путь к CLI-инструменту: рядом с EXE (tools/) или в исходниках."""
@@ -199,7 +251,14 @@ def _same_content(a: str, b: str) -> bool:
 
 
 def workspace_tools() -> str:
-    """Папка, куда копировать CLI-инструменты для вызова из EXE."""
+    """Папка, куда копировать CLI-инструменты для вызова из EXE.
+
+    Кроме копирования новых/изменённых файлов удаляет осиротевшие копии:
+    скрипты, которых больше нет в источнике (например, после переноса
+    одноразовых скриптов в tools/archive). Иначе в рабочей папке остаются
+    копии удалённой функциональности, и приложение может вызвать старый
+    скрипт вместо отсутствующего.
+    """
     ws = workspace()
     dst = os.path.join(ws, "tools")
     os.makedirs(dst, exist_ok=True)
@@ -211,8 +270,10 @@ def workspace_tools() -> str:
             _log_tools_update(src_tools + " (НЕТ ПАПКИ)", -1)
             continue
         copied = 0
+        src_names: set[str] = set()
         for fname in os.listdir(src_tools):
             if fname.endswith((".py", ".ps1")):
+                src_names.add(fname)
                 source = os.path.join(src_tools, fname)
                 target = os.path.join(dst, fname)
                 # Копируем, если файла нет ИЛИ содержимое отличается.
@@ -228,13 +289,28 @@ def workspace_tools() -> str:
                 # и на нём падает (PermissionError)
                 if _safe_copy(source, target):
                     copied += 1
-        _log_tools_update(src_tools, copied)
+        # Осиротевшие копии: файл есть в рабочей папке, но его больше нет
+        # в источнике. Удаляем только файлы .py/.ps1 (не папки и не данные),
+        # сбой удаления не должен ломать запуск.
+        removed = 0
+        for fname in os.listdir(dst):
+            if not fname.endswith((".py", ".ps1")) or fname in src_names:
+                continue
+            target = os.path.join(dst, fname)
+            if not os.path.isfile(target):
+                continue
+            try:
+                os.remove(target)
+                removed += 1
+            except OSError:
+                pass
+        _log_tools_update(src_tools, copied, removed)
         break
     return dst
 
 
-def _log_tools_update(src_tools: str, copied: int) -> None:
-    """Записать в журнал, откуда и сколько инструментов обновлено."""
+def _log_tools_update(src_tools: str, copied: int, removed: int = 0) -> None:
+    """Записать в журнал, откуда и сколько инструментов обновлено/убрано."""
     try:
         logs = os.path.join(local_app_data(), "workspace", "logs")
         os.makedirs(logs, exist_ok=True)
@@ -243,7 +319,7 @@ def _log_tools_update(src_tools: str, copied: int) -> None:
             fh.write(f"{time.strftime('%H:%M:%S')} frozen={is_frozen()} "
                      f"источник={src_tools} "
                      f"существует={os.path.isdir(src_tools)} "
-                     f"обновлено={copied}\n")
+                     f"обновлено={copied} удалено={removed}\n")
     except Exception:
         pass
 
@@ -260,4 +336,107 @@ def output_paths() -> dict[str, str]:
         "samples": os.path.join(ws, "voice_samples"),
         "reference": os.path.join(ws, "reference.wav"),
         "lines": os.path.join(ws, "lines.json"),
+        # профили клонированного голоса
+        "profiles": os.path.join(ws, "voice_profiles"),
     }
+
+
+# --------------------------------------------------------------------------
+# Профили голоса (несколько клонов одного голоса)
+# --------------------------------------------------------------------------
+def profiles_dir() -> str:
+    """Папка профилей: workspace/voice_profiles."""
+    d = os.path.join(workspace(), "voice_profiles")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def profile_dir(name: str) -> str:
+    """Папка конкретного профиля."""
+    return os.path.join(profiles_dir(), _safe_name(name))
+
+
+def profile_reference(name: str) -> str:
+    """reference.wav конкретного профиля."""
+    return os.path.join(profile_dir(name), "reference.wav")
+
+
+def _safe_name(name: str) -> str:
+    """Имя профиля -> безопасное имя папки."""
+    keep = []
+    for ch in (name or "").strip():
+        if ch.isalnum() or ch in " _-":
+            keep.append(ch)
+        elif ch in "ёйцукенгшщзхъфывапролджэячсмитьбю":
+            keep.append(ch)
+    out = "".join(keep).strip().replace(" ", "_")
+    return out or "profile"
+
+
+def list_profiles() -> list[str]:
+    """Список профилей.
+
+    Показываем и пустые (только что созданные) — иначе созданный профиль
+    не появляется в комбобоксе, пока в нём нет reference.wav.
+    """
+    d = profiles_dir()
+    out: list[str] = []
+    try:
+        for entry in sorted(os.listdir(d)):
+            p = os.path.join(d, entry)
+            if os.path.isdir(p):
+                out.append(entry)
+    except Exception:
+        pass
+    return out
+
+
+def create_profile(name: str) -> tuple[str, str]:
+    """Создать профиль. Возвращает (путь_к_reference, сообщение)."""
+    d = profile_dir(name)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception as exc:
+        return "", f"не удалось создать профиль: {exc}"
+    ref = os.path.join(d, "reference.wav")
+    if os.path.exists(ref):
+        return ref, f"профиль «{name}» уже существует"
+    return ref, f"профиль «{name}» создан"
+
+
+def active_profile_file() -> str:
+    """Файл с именем активного профиля."""
+    return os.path.join(workspace(), "active_profile.txt")
+
+
+def get_active_profile() -> str:
+    """Имя активного профиля (пустая строка — используется общий reference.wav)."""
+    try:
+        with open(active_profile_file(), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except Exception:
+        return ""
+
+
+def set_active_profile(name: str) -> None:
+    """Запомнить активный профиль."""
+    try:
+        with open(active_profile_file(), "w", encoding="utf-8") as fh:
+            fh.write((name or "").strip())
+    except Exception:
+        pass
+
+
+def active_reference() -> str:
+    """Путь к reference активного профиля.
+
+    Если профиль выбран — возвращаем его reference.wav (даже если файла
+    ещё нет: сборка создаст его там). Иначе — общий reference.wav.
+    """
+    name = get_active_profile()
+    if name:
+        return profile_reference(name)
+    return output_paths()["reference"]

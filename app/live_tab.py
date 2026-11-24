@@ -30,18 +30,37 @@ import scrollframe
 import studio_core as core
 import studio_paths as sp
 from incoming_tts import IncomingTTSProvider
-from wasapi_loopback import LoopbackCapture, CaptureMode, list_input_devices, list_output_devices, list_running_processes
+from wasapi_loopback import LoopbackCapture, CaptureMode, CaptureStatus, list_input_devices, list_output_devices, list_output_devices_with_loopback, list_running_processes
 
 BG, FG, DIM, ACCENT, GOOD, WARN = "#14161a", "#e8e8e8", "#8b93a1", "#4a9eff", "#7bd88f", "#e8c07a"
 BAD = "#e06c6c"
 
 SR_REC = 44100        # частота записи
 BLOCK_SEC = 0.05      # размер блока от микрофона
-SILENCE_END = 0.55    # пауза, которая завершает фразу (с)
+# Пауза, завершающая фразу. 0.55 с — слишком коротко: при обычной речи
+# микро-паузы между словами рвут фразу, и перевод «тараторит обрывками».
+# 0.75 с даёт целую фразу, но не заставляет ждать слишком долго.
+SILENCE_END = 0.75
 MIN_SPEECH = 0.35     # короче — не отправляем (с)
-MAX_SEG = 14.0        # длиннее — режем на части (с)
+# Длиннее — режем на части. 14 с мало: длинная фраза рвалась посреди
+# слова, и на стыке получалась каша. 25 с хватает на полноценную реплику.
+MAX_SEG = 25.0
 TRIM_SIL = 0.18       # сколько тишины обрезать по краям (с)
 SR_PEER = 44100       # частота записи звука игры (перехват игроков)
+
+# --- Порог речи (шумоподавление) ---
+#
+# Проблема: микрофон ловил не только ближний голос, но и разговор в
+# соседней комнате — и собеседники уходили в перевод отдельными фразами.
+# Причина: порог был max(floor*3, 0.006) — слишком низкий. Тихая речь
+# в 2 метрах даёт RMS выше 0.006 и считалась голосом.
+#
+# Решение: считаем порог ОТНОСИТЕЛЬНО шумового пола и требуем, чтобы
+# сигнал был заметно громче фона. Плюс гистерезис: чтобы начать фразу,
+# нужно превысить верхний порог, а чтобы продолжить — нижний.
+SPEECH_OVER_FLOOR = 4.0     # речь должна быть в 4 раза громче шума
+SPEECH_MIN_ABS = 0.012      # абсолютный минимум (отсекает очень тихий фон)
+SPEECH_HYSTERESIS = 0.7     # нижний порог = верхний * это (не рвём фразу)
 
 # действия для глобальных хоткеев
 ACT_CONT = "live:cont"     # непрерывный режим (переключатель)
@@ -351,6 +370,21 @@ class LiveTab:
         tk.Label(row_vol, text="0 — не слышно, 80 — как есть", bg=BG, fg=DIM,
                  font=("Segoe UI", 9)).pack(side="left")
 
+        # Громкость перевода В КАБЕЛЕ — как слышат абоненты (в игре/Discord)
+        row_vol2 = tk.Frame(game_box, bg=BG)
+        row_vol2.pack(fill="x", pady=2)
+        tk.Label(row_vol2, text="Слышимость в кабеле:", bg=BG,
+                 fg=DIM, font=("Segoe UI", 10)).pack(side="left")
+        self.bridge_out_vol = tk.Scale(
+            row_vol2, from_=0, to=150, orient="horizontal", length=200,
+            bg=BG, fg=FG, troughcolor="#1e2229", highlightthickness=0,
+            activebackground=ACCENT, showvalue=True, resolution=5,
+            command=self._on_bridge_out_vol)
+        self.bridge_out_vol.set(100)
+        self.bridge_out_vol.pack(side="left", padx=(8, 8))
+        tk.Label(row_vol2, text="100 — как есть, 0 — не слышно", bg=BG, fg=DIM,
+                 font=("Segoe UI", 9)).pack(side="left")
+
         # --- захват входящего звука собеседника (Этап A) ---
         capture_box = tk.LabelFrame(game_box, text=" Захват голоса собеседника ", bg=BG, fg=DIM,
                                     font=("Segoe UI", 9), padx=14, pady=10)
@@ -439,7 +473,18 @@ class LiveTab:
         tk.Label(lang_row, text="Язык:", bg=BG, fg=DIM,
                  font=("Segoe UI", 9)).pack(side="left")
         self.peer_lang_combo = ttk.Combobox(lang_row, state="readonly", width=12)
-        self.peer_lang_combo["values"] = ["авто", "es", "en", "it"]
+        # Список языков речи собеседника — общий модуль voice_lang.py
+        try:
+            import studio_core as _core
+            _mod = _core.lang_module()
+            _peer = getattr(_mod, "peer_titles", None)
+            if _peer is not None:
+                self.peer_lang_combo["values"] = [
+                    code for code, _t in _peer()]
+            else:
+                self.peer_lang_combo["values"] = ["авто", "es", "en", "it"]
+        except Exception:
+            self.peer_lang_combo["values"] = ["авто", "es", "en", "it"]
         self.peer_lang_combo.current(0)
         self.peer_lang_combo.pack(side="left", padx=(6, 0))
         self.peer_lang_combo.bind("<<ComboboxSelected>>", self._on_peer_lang)
@@ -538,7 +583,8 @@ class LiveTab:
         mic_pool = [(i, n) for i, n in inputs
                     if not any(g in n.lower() for g in
                                ("стерео микшер", "stereo mix", "первичный драйвер",
-                                "primary sound capture", "переназначение звуковых"))]
+                                "primary sound capture", "переназначение звуковых",
+                                "cable output", "vb-audio"))]
         self._inputs = mic_pool or inputs
         self._outputs = outputs
         self.mic_combo["values"] = [f"{i}: {n}" for i, n in self._inputs]
@@ -579,6 +625,57 @@ class LiveTab:
                         break
         except Exception:
             pass
+
+    # ---------- API для нового UI (устройства и язык) ----------
+
+    def get_input_devices(self) -> list[tuple[int, str]]:
+        """Список микрофонов: [(index, name), ...]."""
+        try:
+            return list(self._inputs)
+        except Exception:
+            return []
+
+    def get_output_devices(self) -> list[tuple[int, str]]:
+        """Список устройств вывода: [(index, name), ...]."""
+        try:
+            return list(self._outputs)
+        except Exception:
+            return []
+
+    def get_selected_mic(self) -> int | None:
+        """Индекс выбранного микрофона (или None)."""
+        return self._sel_mic()
+
+    def get_selected_out(self) -> int | None:
+        """Индекс выбранного устройства вывода (или None)."""
+        return self._sel_out()
+
+    def set_mic_device(self, idx: int) -> bool:
+        """Выбрать микрофон по индексу — как в комбобоксе LiveTab."""
+        for i, (num, _n) in enumerate(self.get_input_devices()):
+            if num == idx:
+                self.mic_combo.current(i)
+                self.studio.in_device = idx
+                return True
+        return False
+
+    def set_out_device(self, idx: int) -> bool:
+        """Выбрать устройство вывода по индексу."""
+        for i, (num, _n) in enumerate(self.get_output_devices()):
+            if num == idx:
+                self.out_combo.current(i)
+                self.studio.out_device = idx
+                return True
+        return False
+
+    def set_lang_code(self, code: str) -> bool:
+        """Выбрать язык перевода по коду (es/en/ow/it)."""
+        for i, v in enumerate(self.lang_combo["values"]):
+            if str(v).split(":")[0].strip() == code:
+                self.lang_combo.current(i)
+                self._on_lang()
+                return True
+        return False
 
     def _sel_mic(self) -> int | None:
         v = self.mic_combo.get()
@@ -630,21 +727,27 @@ class LiveTab:
             return True
         if self.translator is None:
             script = os.path.join(sp.workspace_tools(), "live_translate.py")
-            ref = sp.output_paths()["reference"]
+            # reference активного профиля (или общий, если профиль не выбран)
+            try:
+                ref = sp.active_reference()
+            except Exception:
+                ref = sp.output_paths()["reference"]
             if not os.path.exists(ref):
-                self.state_lbl.config(
-                    text="Нет образца голоса — запиши его на вкладке «2. Голос»",
-                    fg=BAD)
+                self._ui_set("state_lbl",
+                             text="Нет образца голоса — запиши его на вкладке «Голоса»",
+                             fg=BAD)
                 return False
             self.translator = lc.LiveTranslator(
                 sp.engine_python(), script, ref,
                 on_event=self._on_engine_event, on_text=self._on_engine_text)
         ok = self.translator.start()
         if not ok:
-            self.state_lbl.config(text=self.translator.error or "движок не запустился",
-                                  fg=BAD)
+            self._ui_set("state_lbl",
+                         text=self.translator.error or "движок не запустился",
+                         fg=BAD)
             return False
-        self.state_lbl.config(text="движок загружает модели… (15–30 с)", fg=WARN)
+        self._ui_set("state_lbl", text="движок загружает модели… (15–30 с)",
+                     fg=WARN)
         # Создаём провайдер входящего TTS после запуска движка
         if self._incoming_tts is None:
             bridge = getattr(self.studio, "bridge", None)
@@ -758,11 +861,19 @@ class LiveTab:
             self.studio.overlay_show(ru, es)
         except Exception:
             pass
-        # добавляем в историю переводов (боковая панель)
+        # добавляем в историю переводов (боковая панель + главная страница)
         sidebar = getattr(self.studio, "sidebar", None)
         if sidebar is not None and ru:
             try:
                 sidebar.add_translation(ru, es, direction="out")
+            except Exception:
+                pass
+        # «Последние переводы» на главной странице нового UI
+        if ru:
+            try:
+                home = getattr(self.studio, "home_page", None)
+                if home is not None:
+                    home.add_history(f"RU → ES   |   {ru}")
             except Exception:
                 pass
         # показываем распознанный тон — видно, что эмоция поймана
@@ -1138,10 +1249,14 @@ class LiveTab:
     def _on_peer_lang(self, _event=None) -> None:
         """Язык чужой речи: авто или конкретный."""
         code = self.peer_lang_combo.get().strip()
-        code = "" if code == "авто" else code
+        # значения — коды ("auto", "es", "ja", ...); старый формат "авто" тоже
+        if code in ("авто", ""):
+            code = "auto"
+        if ":" in code:
+            code = code.split(":")[0].strip()
         t = self.translator
         if t is not None and t.ready:
-            t.set_peer_lang(code or "auto")
+            t.set_peer_lang(code)
 
     def _show_peer(self, data: dict) -> None:
         """Показать, что сказали другие игроки (и перевод на русский)."""
@@ -1158,11 +1273,19 @@ class LiveTab:
             self.studio.overlay_peer(src, ru)
         except Exception:
             pass
-        # добавляем в историю переводов (боковая панель)
+        # добавляем в историю переводов (боковая панель + главная страница)
         sidebar = getattr(self.studio, "sidebar", None)
         if sidebar is not None and src:
             try:
                 sidebar.add_translation(src, ru, direction="in")
+            except Exception:
+                pass
+        # «Последние переводы» на главной странице нового UI
+        if src:
+            try:
+                home = getattr(self.studio, "home_page", None)
+                if home is not None:
+                    home.add_history(f"ES → RU   |   {src}")
             except Exception:
                 pass
 
@@ -1416,7 +1539,7 @@ class LiveTab:
         """Вернуть статус захвата для UI."""
         if self._loopback_capture is None:
             return {
-                "state": "OFF",
+                "state": CaptureStatus.OFF.value,
                 "error": "",
                 "level": 0.0,
                 "running": False,
@@ -1477,14 +1600,64 @@ class LiveTab:
             self.overlay_on.set(False)
 
     def _on_monitor_vol(self, value=None) -> None:
-        """Громкость перевода в наушниках."""
+        """Громкость перевода в наушниках (что слышу я)."""
         try:
             vol = float(self.monitor_vol.get()) / 100.0
         except Exception:
             vol = 0.8
         bridge = getattr(self.studio, "bridge", None)
         if bridge is not None and getattr(bridge, "running", False):
-            bridge.monitor_gain = vol
+            try:
+                bridge.set_gains(monitor_gain=vol)
+            except Exception:
+                pass
+
+    def _on_bridge_out_vol(self, value=None) -> None:
+        """Общая громкость в кабеле (и речь, и перевод)."""
+        try:
+            vol = float(self.bridge_out_vol.get()) / 100.0
+        except Exception:
+            vol = 1.0
+        bridge = getattr(self.studio, "bridge", None)
+        if bridge is not None and getattr(bridge, "running", False):
+            try:
+                bridge.set_gains(out_gain=vol)
+            except Exception:
+                pass
+
+    def set_bridge_gains(self, monitor: float | None = None,
+                          phrase: float | None = None,
+                          out: float | None = None) -> None:
+        """Настроить громкости моста (для нового UI).
+
+        monitor — что слышу я (0..1.5);
+        phrase  — перевод относительно своей речи (0..1.5);
+        out     — общая громкость в кабеле (0..1.5).
+        """
+        if monitor is not None:
+            try:
+                self.monitor_vol.set(float(monitor) * 100.0)
+            except Exception:
+                pass
+        if phrase is not None:
+            try:
+                self.bridge_phrase_vol.set(float(phrase) * 100.0)
+            except Exception:
+                pass
+        if out is not None:
+            try:
+                self.bridge_out_vol.set(float(out) * 100.0)
+            except Exception:
+                pass
+        bridge = getattr(self.studio, "bridge", None)
+        if bridge is not None and getattr(bridge, "running", False):
+            try:
+                bridge.set_gains(
+                    monitor_gain=(float(monitor) if monitor is not None else None),
+                    phrase_gain=(float(phrase) if phrase is not None else None),
+                    out_gain=(float(out) if out is not None else None))
+            except Exception:
+                pass
 
     def _toggle_hotkeys(self) -> None:
         """Включить/выключить глобальные хоткеи живого перевода."""
@@ -1787,8 +1960,8 @@ class LiveTab:
         self._cont_has_speech = False
         self._strong_blocks = 0
         self._noise = 0.005
-        self.hold_btn.config(text="🎤  ГОВОРИ…  (отпусти)", bg="#8a2f2f")
-        self.state_lbl.config(text="говорю — в кабель идёт испанский", fg=WARN)
+        self._ui_set("hold_btn", text="🎤  ГОВОРИ…  (отпусти)", bg="#8a2f2f")
+        self._ui_set("state_lbl", text="говорю — в кабель идёт перевод", fg=WARN)
 
         # русский глушим СРАЗУ, до первого слова перевода
         bridge = getattr(self.studio, "bridge", None)
@@ -1801,8 +1974,8 @@ class LiveTab:
         except Exception as exc:  # noqa: BLE001
             self._hold_on = False
             self._out_enabled = False
-            self.hold_btn.config(text="🎤  ЗАЖАТЬ И ГОВОРИТЬ", bg="#1e6f3f")
-            self.state_lbl.config(text=f"микрофон не открылся: {exc}", fg=BAD)
+            self._ui_set("hold_btn", text="🎤  ЗАЖАТЬ И ГОВОРИТЬ", bg="#1e6f3f")
+            self._ui_set("state_lbl", text=f"микрофон не открылся: {exc}", fg=BAD)
 
     def _stop_hold(self) -> None:
         """Отпустили: досылаем последнюю фразу, русский вернётся.
@@ -1813,24 +1986,32 @@ class LiveTab:
         if not self._hold_on:
             return
         self._hold_on = False
-        self.hold_btn.config(text="🎤  ЗАЖАТЬ И ГОВОРИТЬ", bg="#1e6f3f")
+        self._ui_set("hold_btn", text="🎤  ЗАЖАТЬ И ГОВОРИТЬ", bg="#1e6f3f")
         self._close_input()
         # дослать последнюю фразу (то, что не успели разделить по паузам)
         self._flush_segment()
-        self.state_lbl.config(text="договариваю по-испански…", fg=WARN)
+        self._ui_set("state_lbl", text="договариваю по-испански…", fg=WARN)
         self._hold_wait_play = True
 
     def _hold_finished(self) -> None:
         """Испанский договорил — русский возвращается в кабель."""
         self._hold_wait_play = False
         self._restore_voice()
-        self.state_lbl.config(text="готов: говори по-русски", fg=GOOD)
+        self._ui_set("state_lbl", text="готов: говори по-русски", fg=GOOD)
 
     def _restore_voice(self) -> None:
-        """Вернуть русский голос в кабель (если никто не заглушил его)."""
+        """Вернуть русский голос в кабель после окончания перевода.
+
+        Автоматика без галочек: PTT сам глушит русский на время перевода
+        (см. _start_hold -> bridge.set_duck(True)) и возвращает его, когда
+        перевод договорил. Галочка «Заглушить русский» — только для
+        непрерывного режима, где фразы идут постоянно.
+        """
         bridge = getattr(self.studio, "bridge", None)
         if bridge is not None and getattr(bridge, "running", False):
-            want = self._mute_ru and self._cont_on
+            # В непрерывном режиме галочка продолжает действовать.
+            # В PTT (_cont_on = False) русский возвращается всегда.
+            want = bool(self._mute_ru) and bool(self._cont_on)
             bridge.set_duck(want)
 
     def _check_hold(self) -> None:
@@ -1865,6 +2046,16 @@ class LiveTab:
             self._play_queue.clear()
 
     # ---------- непрерывный режим ----------
+    def _ui_set(self, attr: str, **kwargs) -> None:
+        """Безопасно обновить виджет, если он есть (в новом UI их нет)."""
+        w = getattr(self, attr, None)
+        if w is None:
+            return
+        try:
+            w.config(**kwargs)
+        except Exception:
+            pass
+
     def _toggle_cont(self) -> None:
         if self._cont_on:
             self._stop_cont()
@@ -1873,13 +2064,14 @@ class LiveTab:
 
     def _start_cont(self) -> None:
         if self._hold_on:
-            self.state_lbl.config(text="сначала отпусти «ЗАЖАТЬ И ГОВОРИТЬ»", fg=WARN)
+            self._ui_set("state_lbl", text="сначала отпусти «ЗАЖАТЬ И ГОВОРИТЬ»",
+                         fg=WARN)
             return
         if not self._ensure_engine():
             return
         idx = self._sel_mic()
         if idx is None:
-            self.state_lbl.config(text="выбери микрофон", fg=BAD)
+            self._ui_set("state_lbl", text="выбери микрофон", fg=BAD)
             return
 
         self._cont_on = True
@@ -1888,27 +2080,34 @@ class LiveTab:
         self._cont_silence = 0.0
         self._cont_has_speech = False
         self._noise = 0.005
-        self.cont_btn.config(text="⏹ Непрерывно: ВКЛ", bg="#8a2f2f")
-        self.state_lbl.config(text="слушаю… говори свободно", fg=GOOD)
+        self._ui_set("cont_btn", text="⏹ Непрерывно: ВКЛ", bg="#8a2f2f")
+        self._ui_set("state_lbl", text="слушаю… говори свободно", fg=GOOD)
 
         try:
             self._stream = self._open_input(idx, self._cont_callback)
             self._stream.start()
         except Exception as exc:  # noqa: BLE001
             self._cont_on = False
-            self.cont_btn.config(text="🔴 Непрерывно: выкл", bg="#2b3a4d")
-            self.state_lbl.config(text=f"микрофон не открылся: {exc}", fg=BAD)
+            self._out_enabled = False
+            self._ui_set("cont_btn", text="🔴 Непрерывно: выкл", bg="#2b3a4d")
+            self._ui_set("state_lbl", text=f"микрофон не открылся: {exc}", fg=BAD)
+            return
+        # Русский в кабеле глушим сразу: иначе собеседник слышит и оригинал,
+        # и перевод одновременно.
+        self._apply_mute()
 
     def _stop_cont(self) -> None:
         self._cont_on = False
-        self.cont_btn.config(text="🔴 Непрерывно: выкл", bg="#2b3a4d")
+        self._ui_set("cont_btn", text="🔴 Непрерывно: выкл", bg="#2b3a4d")
         self._close_input()
         # доотправить то, что не успели
         self._flush_segment()
         # и убрать недозвучавший испанский, чтобы он не играл
         # параллельно с русским
         self._stop_translation()
-        self.state_lbl.config(text="непрерывный режим выключен", fg=DIM)
+        self._ui_set("state_lbl", text="непрерывный режим выключен", fg=DIM)
+        # Возвращаем русский в кабель (если его глушили)
+        self._apply_mute()
 
     def _cont_callback(self, indata, frames, time_info, status) -> None:
         """Колбэк микрофона: копим речь и режем её на фразы по паузам.
@@ -1932,7 +2131,14 @@ class LiveTab:
             self._rms_history.pop(0)
         floor = float(np.percentile(self._rms_history, 20))
         self._noise = floor
-        thr = max(floor * 3.0, 0.006)
+
+        # Порог ОТНОСИТЕЛЬНО шума + абсолютный минимум: так дальний
+        # разговор (соседняя комната, люди рядом) не проходит как речь.
+        thr = max(floor * SPEECH_OVER_FLOOR, SPEECH_MIN_ABS)
+        # Гистерезис: фраза уже начата — держим нижний порог, чтобы
+        # не рвать её на затиханиях.
+        active_thr = (thr * SPEECH_HYSTERESIS
+                      if self._cont_has_speech else thr)
 
         # Сглаженная энергия: одиночный щелчок (пик в шуме) не должен
         # считаться речью — иначе фраза из одного всплеска уходит в перевод.
@@ -1941,12 +2147,12 @@ class LiveTab:
             self._smooth.pop(0)
         smooth = sum(self._smooth) / len(self._smooth)
 
-        if smooth > thr:
+        if smooth > active_thr:
             self._cont_has_speech = True
             self._cont_silence = 0.0
             # «сильных» блоков (громких заметно выше порога) должно быть
             # несколько: настоящая речь длится, а щелчок — один блок
-            if rms > thr * 1.5:
+            if rms > active_thr * 1.5:
                 self._strong_blocks += 1
         else:
             self._cont_silence += BLOCK_SEC
@@ -1984,15 +2190,24 @@ class LiveTab:
         # Проверяем, что это РЕАЛЬНО речь, а не шум: фраза должна быть
         # заметно громче шумового пола. Иначе Whisper на шуме выдаёт
         # «Я не знаю, что это» — и это озвучивается.
+        #
+        # Порог согласован с детектором в _cont_callback: берём тот же
+        # SPEECH_OVER_FLOOR, иначе фраза проходит детектор, но отбрасывается
+        # здесь (или наоборот) — и дальний разговор пролезал в перевод.
         seg_rms = float(np.sqrt((audio.astype(np.float64) ** 2).mean()))
         floor = self._noise if self._noise > 0 else 0.001
-        if seg_rms < floor * 2.2:
+        if seg_rms < max(floor * SPEECH_OVER_FLOOR, SPEECH_MIN_ABS):
             return
         self._queue_translate(audio, SR_REC)
 
     @staticmethod
     def _trim_silence(audio: np.ndarray) -> np.ndarray:
-        """Убрать тишину по краям фразы (в т.ч. хвост после паузы)."""
+        """Убрать тишину по краям фразы.
+
+        Порог 0.12 от пика слишком агрессивен: у него «съедались»
+        последние согласные (окончания слов). Понижаем до 0.06 и
+        увеличиваем запас по краям, чтобы слово звучало целиком.
+        """
         if audio.size == 0:
             return audio
         win = int(SR_REC * 0.02)
@@ -2004,12 +2219,14 @@ class LiveTab:
         peak = float(energy.max())
         if peak <= 0:
             return audio
-        thr = max(peak * 0.12, 0.002)
+        # 0.06 вместо 0.12: тихие окончания слов не режутся
+        thr = max(peak * 0.06, 0.0015)
         loud = np.where(energy > thr)[0]
         if loud.size == 0:
             return audio
-        start = max(0, (loud[0] - int(TRIM_SIL / 0.02)) * win)
-        end = min(len(audio), (loud[-1] + 1 + int(TRIM_SIL / 0.02)) * win)
+        # Запас 0.25 с вместо 0.18 с — чтобы не срезать затухающий хвост
+        start = max(0, (loud[0] - int(0.25 / 0.02)) * win)
+        end = min(len(audio), (loud[-1] + 1 + int(0.25 / 0.02)) * win)
         return audio[start:end]
 
     # ---------- микрофон: общий код ----------
@@ -2071,6 +2288,9 @@ class LiveTab:
         bridge = getattr(self.studio, "bridge", None)
         if bridge is None or not getattr(bridge, "running", False):
             return
+        # Авто-заглушение: в PTT русский глушится всегда, пока идёт перевод
+        # (_hold_on). В непрерывном режиме — только если стоит галочка.
+        # Пользователь не должен ничего включать вручную.
         want = (self._hold_on or self._swap_busy
                 or (self._cont_on and self._mute_ru))
         if getattr(bridge, "ducked", False) != want:
