@@ -40,7 +40,7 @@ class HomePage(tk.Frame):
         header.pack(fill="x", pady=(0, SPACE_L))
 
         tk.Label(
-            header, text="RedZ Voice Studio",
+            header, text="Auraloom Voice Studio",
             bg=BG, fg="#ffffff", font=FONT_APP_TITLE, anchor="w").pack(side="left")
 
         eng_box = tk.Frame(header, bg=BG)

@@ -1,11 +1,12 @@
 # Auraloom — документация
 
-Единая точка входа в документацию проекта. Записи 2026-11-16 – исторические;
-актуальное состояние на **2026-11-19** сводит `AUDIT_2026-11-19.md` (коммит,
-проверки, ограничения), подробности по дефектам — в `MANUAL_RESULTS.md`,
-по смене 18.11 — в `HANDOFF_2026-11-18.md` (каноничный чеклист —
-`MANUAL_TEST.md`, но он частично устарел: хоткей, стартовые настройки и срок
-хранения истории (теперь 3 дня) — сверяйся с ROADMAP и MANUAL_RESULTS).
+Единая точка входа в документацию проекта. Актуальное состояние на
+**2026-11-24** (ребрендинг Auraloom) сводит **`AI_HANDOFF.md`** — его читают
+первым после этого файла. Аудит дельты 19.11 — `AUDIT_2026-11-19.md`,
+подробности по дефектам — `MANUAL_RESULTS.md`, смена 18.11 —
+`HANDOFF_2026-11-18.md` (каноничный чеклист — `MANUAL_TEST.md`, но он
+частично устарел: хоткей, стартовые настройки и срок хранения истории
+(теперь 3 дня) — сверяйся с ROADMAP и MANUAL_RESULTS).
 
 ## Назначение проекта
 
@@ -38,11 +39,13 @@ PySide6 + QML (GUI, app/qtapp)  ──►  app/*.py (ядро, аудио, хо�
 
 | Документ | О чём |
 |---|---|
+| [AI_HANDOFF.md](AI_HANDOFF.md) | **главный документ передачи**: состояние, архитектура, реализовано/проверено/нет, модели, задержки, аудио-маршруты, готовность к релизу, миграция бренда |
 | [PRODUCT_SPECIFICATION.md](PRODUCT_SPECIFICATION.md) | что за продукт, экраны, сценарии, реализовано/запланировано |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | подтверждённая кодом архитектура, IPC, состояния, данные |
 | [FEATURE_PARITY.md](FEATURE_PARITY.md) | **обязательный**: Legacy ↔ новый UI, что перенесено, что нет |
 | [ROADMAP.md](ROADMAP.md) | поэтапный план с ID, приоритетами и критериями закрытия (сверен с кодом 19.11) |
 | [AUDIT_2026-11-19.md](AUDIT_2026-11-19.md) | сводный аудит дельты: состояние, сверка с GitHub, проверки, ограничения |
+| [AUDIT_LEGACY_2026-11-22.md](AUDIT_LEGACY_2026-11-22.md) | ревизия Legacy: аудиопуть, громкости, почему в Discord тишина (исторический) |
 | [HANDOFF_2026-11-18.md](HANDOFF_2026-11-18.md) | передача смены 18.11: что менялось и что осталось |
 | [MANUAL_RESULTS.md](MANUAL_RESULTS.md) | фактическое прохождение ручных сценариев по разделам |
 | [QA_TEST_BUILD.md](QA_TEST_BUILD.md) | чек-лист тест-сборки для тестировщиков: сбор голоса, reference, клон чужого голоса |
@@ -56,7 +59,7 @@ PySide6 + QML (GUI, app/qtapp)  ──►  app/*.py (ядро, аудио, хо�
 ## Карта проекта
 
 ```
-redz_mx_soundboard/
+Auraloom/                    # корень проекта
 ├── app/                     # исходники приложения
 │   ├── voice_studio.py      # точка входа: --ui-old (Tk старый), --ui-new, --ui-qt (по умолчанию)
 │   ├── qtapp/               # новый интерфейс: PySide6 + QML
@@ -65,7 +68,7 @@ redz_mx_soundboard/
 │   │   ├── live_engine.py   # живой перевод: PTT, непрерывный режим, уровень, состояние
 │   │   ├── voice_controller.py # запись образца, дубли, сравнение
 │   │   ├── models.py        # модели QML: подсказки, дубли, семплы, история
-│   │   └── qml/             # main.qml, pages/*.qml, RedZ/ (дизайн-система), icons/
+│   │   └── qml/             # main.qml, pages/*.qml, Auraloom/ (дизайн-система), icons/
 │   ├── studio_core.py       # Recorder, reference, запуск движка, раскладка файлов
 │   ├── studio_paths.py      # workspace, engine, профили, сидинг, single-instance lock
 │   ├── live_client.py       # клиент движка (subprocess + JSON-lines IPC)
@@ -76,23 +79,24 @@ redz_mx_soundboard/
 │   ├── hotkeys.py           # глобальные хоткеи (RegisterHotKey)
 │   ├── translate.py         # текстовый перевод (fallback)
 │   ├── ui/                  # Legacy Tk-интерфейс (3 и 6 вкладок)
-│   └── redz_voice_studio.spec  # PyInstaller onefile
+│   └── auraloom.spec  # PyInstaller onefile
 ├── tools/                   # CLI: движок перевода, озвучка, проверки, сборка
 ├── tests/                   # unittest (127 тестов)
 ├── voices/ player/ html/ sounds/ out/   # ресурсы озвучки и плеера
 ├── lines.json               # 33 фразы: es/ru/en/ow/it, категории, клавиши
-├── dist/RedZVoiceStudio.exe # собранное приложение (onefile)
+├── dist/Auraloom.exe          # собранное приложение (onefile)
 └── Documentation/           # этот каталог
 ```
 
 ## Порядок чтения
 
 1. `Documentation/README.md` (этот файл)
-2. [PRODUCT_SPECIFICATION.md](PRODUCT_SPECIFICATION.md) — что должно работать
-3. [FEATURE_PARITY.md](FEATURE_PARITY.md) — что реально работает
-4. [ARCHITECTURE.md](ARCHITECTURE.md) — как устроено
-5. [TEST_PLAN.md](TEST_PLAN.md) — как проверять
-6. [ROADMAP.md](ROADMAP.md) — что делать дальше
+2. [AI_HANDOFF.md](AI_HANDOFF.md) — где проект находится сейчас
+3. [PRODUCT_SPECIFICATION.md](PRODUCT_SPECIFICATION.md) — что должно работать
+4. [FEATURE_PARITY.md](FEATURE_PARITY.md) — что реально работает
+5. [ARCHITECTURE.md](ARCHITECTURE.md) — как устроено
+6. [TEST_PLAN.md](TEST_PLAN.md) — как проверять
+7. [ROADMAP.md](ROADMAP.md) — что делать дальше
 
 ## Приоритет источников информации
 

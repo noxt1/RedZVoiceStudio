@@ -1,7 +1,7 @@
 """Живой перевод RU->ES: движок, который держит модели в памяти.
 
-GUI (RedZVoiceStudio.exe) не содержит torch — тяжёлые модели живут в движке
-(%LOCALAPPDATA%\\RedZVoiceStudio\\engine). Этот скрипт — серверная часть
+GUI (Auraloom.exe) не содержит torch — тяжёлые модели живут в движке
+(%LOCALAPPDATA%\\Auraloom\\engine). Этот скрипт — серверная часть
 живого перевода:
 
     -> stdin  : команды (JSON, построчно)
@@ -130,31 +130,31 @@ def xtts_language(code: str) -> str:
 #                                       фразами — текст заметно лучше
 # Разница по скорости всего ~30 мс, а качество текста критично: от него
 # зависит перевод. Поэтому по умолчанию — turbo.
-ASR_MODEL = os.environ.get("REDZ_ASR_MODEL", "mobiuslabsgmbh/faster-whisper-large-v3-turbo")
-ASR_FALLBACK = os.environ.get("REDZ_ASR_FALLBACK", "Systran/faster-whisper-small")
+ASR_MODEL = os.environ.get("AURALOOM_ASR_MODEL", "mobiuslabsgmbh/faster-whisper-large-v3-turbo")
+ASR_FALLBACK = os.environ.get("AURALOOM_ASR_FALLBACK", "Systran/faster-whisper-small")
 
 # Точность вычислений для распознавания:
 #   float16      — VRAM 2241 МБ
 #   int8_float16 — тот же текст на записях пользователя, VRAM 1019 МБ
 #                  (минус ~1.2 ГБ — важно, когда параллельно игра)
 # Замер: research/bench_optimization.py, research/bench_int8_quality.py
-ASR_COMPUTE = os.environ.get("REDZ_ASR_COMPUTE", "int8_float16")
+ASR_COMPUTE = os.environ.get("AURALOOM_ASR_COMPUTE", "int8_float16")
 
 # Минимальная уверенность определения языка собеседника (режим auto).
 # Ниже порога фраза не переводится: лучше пропустить, чем озвучить не то.
-PEER_LANG_MIN_CONF = float(os.environ.get("REDZ_PEER_LANG_CONF", "0.60"))
+PEER_LANG_MIN_CONF = float(os.environ.get("AURALOOM_PEER_LANG_CONF", "0.60"))
 # Сколько цепочек перевода держать в памяти: 2 — переключение языка
 # мгновенное, но +~600 МБ RAM; 1 — экономно, с перезагрузкой модели.
-MT_CACHE_CHAINS = max(1, int(os.environ.get("REDZ_MT_CACHE_CHAINS", "2")))
+MT_CACHE_CHAINS = max(1, int(os.environ.get("AURALOOM_MT_CACHE_CHAINS", "2")))
 # Замер на 12 реальных фразах (build/quality_sweep): для обратного перевода
 # (собеседник -> RU) beam=4 дал chrF 36,9 против 30,7 у greedy, ценой
 # +150 мс — там это не критично. Для прямого (RU -> ES) greedy лучше
 # (41,6 против 37,8), поэтому beam включается только для обратного.
-MT_BEAMS_REVERSE = max(1, int(os.environ.get("REDZ_MT_BEAMS_REVERSE", "4")))
+MT_BEAMS_REVERSE = max(1, int(os.environ.get("AURALOOM_MT_BEAMS_REVERSE", "4")))
 # Исходящий перевод: по замеру greedy точнее (chrF 41,6 против 37,8
 # у beam=4) и втрое быстрее. Стабильность фразы обеспечивается кэшем и
 # самим ASR; увеличение beam калечит качество — не трогаем.
-MT_BEAMS_FORWARD = max(1, int(os.environ.get("REDZ_MT_BEAMS_FORWARD", "1")))
+MT_BEAMS_FORWARD = max(1, int(os.environ.get("AURALOOM_MT_BEAMS_FORWARD", "1")))
 
 # Недосклеенные куски реплики собеседника не должны ждать последнюю часть
 # вечно: если последний кусок потерялся (переполнение очереди, обрыв записи
@@ -162,8 +162,8 @@ MT_BEAMS_FORWARD = max(1, int(os.environ.get("REDZ_MT_BEAMS_FORWARD", "1")))
 # реплики уходили в распознавание как одна. Основной признак — номер фразы
 # (GUI нумерует каждую отправленную реплику), таймаут и ограничение объёма —
 # страховка для источника без номера.
-PEER_PARTS_TTL = max(1.0, float(os.environ.get("REDZ_PEER_PARTS_TTL", "8")))
-PEER_PARTS_MAX_BYTES = int(os.environ.get("REDZ_PEER_PARTS_MAX", "2000000"))
+PEER_PARTS_TTL = max(1.0, float(os.environ.get("AURALOOM_PEER_PARTS_TTL", "8")))
+PEER_PARTS_MAX_BYTES = int(os.environ.get("AURALOOM_PEER_PARTS_MAX", "2000000"))
 
 # Версия протокола GUI <-> движок. Меняется при любом изменении полей
 # команд/событий: GUI сравнивает её с boot-событием и предупреждает,
@@ -251,7 +251,7 @@ def _asr_candidates() -> list[str]:
 # Перевод на CPU: он занимает 0.6 ГБ VRAM и совсем немного GPU.
 # Разница по скорости — 147 мс против 77 мс, зато видеопамять вся
 # остаётся игре и XTTS.
-MT_DEVICE = os.environ.get("REDZ_MT_DEVICE", "cpu")
+MT_DEVICE = os.environ.get("AURALOOM_MT_DEVICE", "cpu")
 
 # ---------------------------------------------------------------------------
 # Режимы Fast / Balanced / Quality / Manual.
@@ -284,7 +284,11 @@ MODES: dict[str, dict] = {
     },
     "quality": {
         "title": "Quality",
-        "compute": "float16",
+        # Замер out/probe_vram_models.py (22.11): float16 занимает 2221 МБ
+        # VRAM, int8_float16 — 1209 МБ при том же тексте на записях
+        # пользователя (research/bench_int8_quality.py). Режим Quality
+        # отличается beam/проверками, а не точностью ASR.
+        "compute": "int8_float16",
         "beam": 3,
         "stream_chunk": 40,
         "verify": 2,
@@ -308,7 +312,7 @@ MODES: dict[str, dict] = {
 # Правка Этап C.7.2: было 10 — XTTS выдавал фразы «обрывками»: на стыке
 # чанков пропадали слоги, слова не договаривались. 30 даёт связную речь
 # с приемлемой задержкой (первый звук ~на 200 мс позже, чем при 10).
-STREAM_CHUNK = int(os.environ.get("REDZ_STREAM_CHUNK", "30"))
+STREAM_CHUNK = int(os.environ.get("AURALOOM_STREAM_CHUNK", "30"))
 
 # Сколько секунд синтеза слушать, прежде чем признать начало годным.
 # Мусор на коротких фразах слышен сразу, поэтому ждать всю фразу не нужно
@@ -713,9 +717,9 @@ class Engine:
         self._lang_hits: list[tuple[str, float]] = []
         self._peer_lang_prob = 0.0
         self._peer_lang_min_sec = float(
-            os.environ.get("REDZ_PEER_LANG_MIN_SEC", "1.1"))
+            os.environ.get("AURALOOM_PEER_LANG_MIN_SEC", "1.1"))
         self._peer_lang_min_words = int(
-            os.environ.get("REDZ_PEER_LANG_MIN_WORDS", "2"))
+            os.environ.get("AURALOOM_PEER_LANG_MIN_WORDS", "2"))
         # ---------- режим работы и метрики ----------
         self.mode = "balanced"
         self.asr_compute = ASR_COMPUTE
@@ -1567,6 +1571,13 @@ class Engine:
         self.tts.load_checkpoint(cfg, checkpoint_dir=snap,
                                  vocab_path=os.path.join(snap, "vocab.json"))
         self.tts.cuda()
+        try:
+            import torch
+            log(f"[engine] VRAM XTTS: allocated "
+                f"{torch.cuda.memory_allocated() / 2**20:.0f} МБ, "
+                f"reserved {torch.cuda.memory_reserved() / 2**20:.0f} МБ")
+        except Exception:
+            pass
         # кэш голоса: считается один раз (1.4 с), дальше 0.03 с
         self.gpt_latent, self.spk_emb = self.tts.get_conditioning_latents(
             audio_path=[reference])

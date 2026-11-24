@@ -446,7 +446,7 @@ class Studio:
         style.configure("Treeview.Heading", background="#2c313a", foreground="#c8cedb",
                         relief="flat")
         style.map("Treeview", background=[("selected", "#2f4a6b")])
-        style.configure("Redz.Horizontal.TProgressbar", troughcolor="#1e2229",
+        style.configure("Auraloom.Horizontal.TProgressbar", troughcolor="#1e2229",
                         background=ACCENT, bordercolor="#1e2229",
                         lightcolor=ACCENT, darkcolor=ACCENT, thickness=14, borderwidth=0)
 
@@ -1126,7 +1126,7 @@ class Studio:
         lvl.pack(fill="x", padx=16, pady=(4, 8))
         self._lbl(lvl, "Уровень:", 10, DIM).pack(side="left")
         self.level_bar = ttk.Progressbar(lvl, maximum=100, length=360,
-                                         style="Redz.Horizontal.TProgressbar")
+                                         style="Auraloom.Horizontal.TProgressbar")
         self.level_bar.pack(side="left", padx=(8, 0))
         self.level_lbl = self._lbl(lvl, "0%", 9, DIM)
         self.level_lbl.pack(side="left", padx=8)
@@ -2302,7 +2302,7 @@ class Studio:
 def _diag_voice_all() -> int:
     """Диагностический режим: прогнать задачу «Озвучить всё» и снять трейсбек.
 
-    Запуск:  RedZVoiceStudio.exe --diag-voice-all
+    Запуск:  Auraloom.exe --diag-voice-all
     Идёт РОВНО тем же путём, что и кнопка: Studio -> _voice_all -> _run_job
     -> рабочий поток. Ошибка пишется в workspace\\logs\\error_*.txt —
     в EXE нет консоли, поэтому иначе её не увидеть.
@@ -2357,7 +2357,7 @@ def _diag_voice_all() -> int:
 def _diag_live() -> int:
     """Диагностика живой перевода в EXE: прогнать запись и написать отчёт.
 
-    Запуск:  RedZVoiceStudio.exe --diag-live
+    Запуск:  Auraloom.exe --diag-live
     Результат: workspace\\logs\\diag_live.txt
     """
     import time
@@ -2490,7 +2490,7 @@ def main() -> None:
         try:
             import tkinter.messagebox as mb
             mb.showwarning(
-                "RedZ Voice Studio",
+                "Auraloom Voice Studio",
                 "Приложение уже запущено.\n"
                 "Два экземпляра не могут работать с одной рабочей папкой — "
                 "закрой предыдущий и открой снова.")

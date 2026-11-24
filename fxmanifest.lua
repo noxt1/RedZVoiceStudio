@@ -1,4 +1,4 @@
--- Звуковая панель RedZ (RedM / FiveM).
+-- Звуковая панель Auraloom (RedM / FiveM).
 -- Клиентский ресурс: озвучка по горячим клавишам, воспроизведение через NUI.
 --
 -- Установка (если есть права на сервере):
@@ -13,9 +13,9 @@
 fx_version 'cerulean'
 games { 'rdr3', 'gta5' }
 
-name 'redz-mx-soundboard'
+name 'auraloom-mx-soundboard'
 description 'Mexican accent soundboard for RedZ RolePlay (no family insults, per rule 3.2)'
-author 'RedZ player'
+author 'Auraloom player'
 version '1.0.0'
 
 ui_page 'html/index.html'

@@ -9,8 +9,8 @@
 │  PySide6 6.12 + QML/Qt Quick                                              │
 │  app/qtapp/qml/main.qml ─ Loader ─ pages/{Home,Voices,Settings,History,   │
 │                                              Phrases}.qml                │
-│  дизайн-система: RedZ/{Theme, Card, Glow, AppButton, AppCombo, AppSwitch, │
-│                  AppField, AppSlider, Icon, PageTitle, StatusPill, Toast} │
+│  дизайн-система: Auraloom/{Theme, Card, Glow, AppButton, AppCombo,         │
+│                  AppSwitch, AppField, AppSlider, Icon, StatusPill}        │
 │                                                                           │
 │  контекст QML: appState, liveEngine, voiceController, promptModel,        │
 │                takeModel, sampleModel, historyModel                       │
@@ -30,7 +30,7 @@
 ```
 
 Тяжёлый стек в GUI не импортируется: `torch`, `TTS`, `transformers` исключены
-из PyInstaller-сборки (см. `app/redz_voice_studio.spec`, `excludes`).
+из PyInstaller-сборки (см. `app/auraloom.spec`, `excludes`).
 
 ## 2. Слои
 
@@ -176,11 +176,11 @@ STOPPED ──start──► LOADING ──ready──► READY ──stop──
 
 ## 9. Сборка
 
-`app/redz_voice_studio.spec`: entry `app/voice_studio.py`; данные — `lines.json`,
+`app/auraloom.spec`: entry `app/voice_studio.py`; данные — `lines.json`,
 `player/`, `voices/`, `tools/`, `installers/`, Lua-ресурс, `html/`,
 `app/qtapp/qml → qtapp/qml`, `studio.ico`; hiddenimports — модули ядра, `ui.*`,
 `qtapp.*`, `PySide6.QtCore/QtGui/QtQml/QtQuick/QtSvg`. Итог:
-`dist/RedZVoiceStudio.exe` (onefile, ~316 МБ). QML-модули QtQuick собираются
+`dist/Auraloom.exe` (onefile, ~316 МБ). QML-модули QtQuick собираются
 хуком `hook-PySide6.QtQml` (проверено: в запущенном EXE загружены
 `Qt6Quick.dll`, `Qt6Qml.dll`, `Qt6QuickEffects.dll`).
 

@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(ROOT, "app"))
 
 import studio_paths as sp  # noqa: E402
 
-EXE = os.path.join(ROOT, "dist", "RedZVoiceStudio.exe")
+EXE = os.path.join(ROOT, "dist", "Auraloom.exe")
 LOG_NAME = "hotkey_events.log"
 HOTKEY_FILE = "live_hotkeys.json"
 
@@ -100,7 +100,7 @@ def _kill_all_instances() -> None:
     if os.name != "nt":
         return
     try:
-        subprocess.run(["taskkill", "/F", "/IM", "RedZVoiceStudio.exe"],
+        subprocess.run(["taskkill", "/F", "/IM", "Auraloom.exe"],
                        capture_output=True, timeout=15)
     except Exception:
         pass

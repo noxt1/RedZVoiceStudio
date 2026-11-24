@@ -1,4 +1,4 @@
-"""Добавить стек RedZ Voice Studio в общий индекс памяти.
+"""Добавить стек Auraloom Voice Studio в общий индекс памяти.
 
     python tools\\link_vault_index.py
 """
@@ -12,9 +12,9 @@ VAULT = r"C:\Users\cyril\Documents\Obsidian\HermesVault\HermesVault"
 INDEX = os.path.join(VAULT, "80-Память", "00-Индекс.md")
 ANCHOR = "### WildWestGunslinger"
 
-BLOCK = """### RedZ Voice Studio
+BLOCK = """### Auraloom Voice Studio
 
-Стек памяти проекта: [[10-Проекты/RedZ-Voice-Studio/README|RedZ Voice Studio]].
+Стек памяти проекта: [[10-Проекты/RedZ-Voice-Studio/README|Auraloom Voice Studio]].
 
 - [[10-Проекты/RedZ-Voice-Studio/00-СОСТОЯНИЕ|Состояние]] — что сделано, где лежит.
 - [[10-Проекты/RedZ-Voice-Studio/06-РАБОЧИЙ-КОНТЕКСТ|Рабочий контекст]] — с чего продолжать.

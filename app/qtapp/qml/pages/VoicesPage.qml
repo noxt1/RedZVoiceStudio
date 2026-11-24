@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Голос — по референсу: карточка с «микрофоном», настройки движка/профиля,
 /// громкость и живость, горячие клавиши и запись образца.
@@ -770,7 +770,7 @@ Item {
                             }
                             Text {
                                 text: modelData.text
-                                width: parent.width - 150
+                                width: parent.width - 186
                                 elide: Text.ElideRight
                                 color: modelData.ok ? Theme.textPrimary : Theme.textSecondary
                                 font.family: Theme.fontFamilyText
@@ -805,6 +805,28 @@ Item {
                                     enabled: modelData.ok
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: voiceController.playSample(modelData.path)
+                                }
+                            }
+                            Item {
+                                width: 26
+                                height: 26
+                                anchors.verticalCenter: parent.verticalCenter
+                                Icon {
+                                    anchors.centerIn: parent
+                                    source: "icons/trash.svg"
+                                    size: 14
+                                    color: delArea.containsMouse ? Theme.danger
+                                                                 : Theme.textMuted
+                                }
+                                MouseArea {
+                                    id: delArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        page.keepTakeScroll()
+                                        voiceController.deleteSample(modelData.path)
+                                    }
                                 }
                             }
                         }

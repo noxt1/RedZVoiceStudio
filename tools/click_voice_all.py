@@ -18,8 +18,8 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "dist", "RedZVoiceStudio.exe")
-LOGS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio",
+EXE = os.path.join(ROOT, "dist", "Auraloom.exe")
+LOGS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom",
                     "workspace", "logs")
 
 

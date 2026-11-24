@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(ROOT, "app"))
 # притворяемся собранным EXE
 sys.frozen = True
 sys._MEIPASS = ROOT
-sys.executable = os.path.join(ROOT, "dist", "RedZVoiceStudio.exe")
+sys.executable = os.path.join(ROOT, "dist", "Auraloom.exe")
 
 import studio_paths as sp  # noqa: E402
 import studio_core as core  # noqa: E402

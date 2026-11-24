@@ -1,4 +1,4 @@
-"""UI модули прототипа Liquid Glass для RedZ Voice Studio.
+"""UI модули прототипа Liquid Glass для Auraloom Voice Studio.
 
 Соответствует утверждённому дизайну (ui_visual_tokens.json — второй концепт).
 """

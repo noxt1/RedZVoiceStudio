@@ -75,7 +75,7 @@ def test_tts_params():
     import re
     src = open(os.path.join(os.path.dirname(__file__), "..", "tools",
                             "live_translate.py"), encoding="utf-8").read()
-    m = re.search(r'STREAM_CHUNK\s*=\s*int\(os\.environ\.get\("REDZ_STREAM_CHUNK",\s*"(\d+)"\)', src)
+    m = re.search(r'STREAM_CHUNK\s*=\s*int\(os\.environ\.get\("AURALOOM_STREAM_CHUNK",\s*"(\d+)"\)', src)
     chunk = int(m.group(1))
     print(f"STREAM_CHUNK: {chunk}")
     assert chunk >= 25

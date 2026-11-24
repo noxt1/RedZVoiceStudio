@@ -641,7 +641,10 @@ class LiveEngine(QObject):
                 if os.path.exists(fallback):
                     ref = fallback
                 else:
-                    self._set_state("ERROR", "нет образца голоса (reference.wav)")
+                    self._set_state(
+                        "ERROR",
+                        "нет образца голоса: запиши дубли на вкладке «Голоса» "
+                        "и нажми «Собрать из всех»")
                     return
             self._translator = lc.LiveTranslator(
                 sp.engine_python(), script, ref,

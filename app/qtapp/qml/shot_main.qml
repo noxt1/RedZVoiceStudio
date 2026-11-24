@@ -1,5 +1,5 @@
 import QtQuick
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Версия main.qml для рендеринга в QQuickWidget (корень = Item).
 Item {
@@ -37,7 +37,7 @@ Item {
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
                     Text {
-                        text: "RedZ"
+                        text: "Auraloom"
                         color: Theme.textPrimary
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontH2Px

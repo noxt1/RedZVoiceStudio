@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 REF = os.path.join(WS, "reference.wav")
 
 

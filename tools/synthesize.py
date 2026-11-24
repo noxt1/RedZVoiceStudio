@@ -1,4 +1,4 @@
-"""Генерация озвучки звуковой панели RedZ.
+"""Генерация озвучки звуковой панели Auraloom.
 
 Два движка:
   1) piper  — офлайн, мексиканский голос es-MX (встроенный голос Piper).
@@ -51,8 +51,8 @@ def _voice_paths(voice: str) -> tuple[str, str]:
     """Найти файлы голоса: рабочая папка -> voices/ рядом -> исходный путь."""
     onnx, cfg = PIPER_VOICES[voice]
     roots = [
-        os.environ.get("REDZ_WORKSPACE", ""),
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace"),
+        os.environ.get("AURALOOM_WORKSPACE", ""),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace"),
         os.path.join(ROOT, "voices"),
         os.path.dirname(os.path.abspath(__file__)),
     ]

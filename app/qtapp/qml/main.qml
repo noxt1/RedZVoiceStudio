@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Window
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Главное окно Auraloom (Qt Quick) — по референсу:
 ///   • слева сайдбар: вывеска приложения + навигация + закатное свечение

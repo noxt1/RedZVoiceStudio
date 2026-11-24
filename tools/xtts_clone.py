@@ -1,4 +1,4 @@
-"""XTTS-v2: клонирование ТВОЕГО голоса для звуковой панели RedZ.
+"""XTTS-v2: клонирование ТВОЕГО голоса для звуковой панели Auraloom.
 
 Почему отдельный скрипт, а не tools/synthesize.py:
   coqui-tts 0.28 на Windows тянет torchaudio.load -> torchcodec -> системный FFmpeg,

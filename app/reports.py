@@ -69,6 +69,8 @@ def build_report_text(diag_text: str = "") -> str:
     ]
     if exe and os.path.exists(exe):
         lines.append(f"EXE размер: {os.path.getsize(exe)}")
+        lines.append("EXE изменён: " + time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(exe))))
         lines.append(f"EXE SHA-256: {_sha256(exe)}")
     lines += [
         f"Python: {sys.version.split()[0]}",

@@ -39,13 +39,15 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(info["beam_size"], 3)
         self.assertEqual(info["stream_chunk"], 40)
         self.assertEqual(info["verify_attempts"], 2)
-        self.assertEqual(info["asr_compute"], "float16")
+        # int8_float16: текст тот же, VRAM 2221 -> 1209 МБ
+        # (замер out/probe_vram_models.py 22.11)
+        self.assertEqual(info["asr_compute"], "int8_float16")
 
     def test_manual_keeps_current_parameters(self):
         self.engine.set_mode("quality")
         info = self.engine.set_mode("manual")
         self.assertEqual(info["beam_size"], 3)
-        self.assertEqual(info["asr_compute"], "float16")
+        self.assertEqual(info["asr_compute"], "int8_float16")
         self.assertEqual(self.engine.mode, "manual")
 
     def test_unknown_mode_falls_back_to_balanced(self):

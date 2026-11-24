@@ -1,4 +1,4 @@
-"""Тема Liquid Glass для RedZ Voice Studio.
+"""Тема Liquid Glass для Auraloom Voice Studio.
 
 Цвета, шрифты, отступы, радиусы скругления — единый источник verdad,
 совпадающий с ui_visual_tokens.json (утверждённый второй концепт дизайна).

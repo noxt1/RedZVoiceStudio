@@ -1,4 +1,4 @@
-"""Переключить вкладку в окне RedZ Voice Studio (Ctrl+PgDn) и снять скриншот.
+"""Переключить вкладку в окне Auraloom Voice Studio (Ctrl+PgDn) и снять скриншот.
 
     python tools\\switch_tab.py out.png 2
 """
@@ -20,7 +20,7 @@ VK_PGDN = 0x22
 VK_PGUP = 0x21
 
 
-def find_window(needle: str = "RedZ Voice Studio") -> int:
+def find_window(needle: str = "Auraloom Voice Studio") -> int:
     found = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 

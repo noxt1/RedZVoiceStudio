@@ -39,7 +39,7 @@ def main() -> None:
     }
 
     import tempfile
-    tmp_dir = tempfile.mkdtemp(prefix="redz_rs_")
+    tmp_dir = tempfile.mkdtemp(prefix="auraloom_rs_")
 
     paths = {}
     for name, data in variants.items():

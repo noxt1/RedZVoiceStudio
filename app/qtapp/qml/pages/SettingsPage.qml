@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Настройки — неоновый каркас: общие параметры, перевод/модели,
 /// устройства и состояние движка. Вся логика и привязки сохранены.
@@ -574,7 +574,7 @@ Item {
                                 spacing: 8
                                 Text { text: "Виртуальный кабель"; color: Theme.textSecondary; font.family: Theme.fontFamilyText; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                                 Item { width: 1; height: 1 }
-                                StatusPill { text: appState.cableStatus(); pillState: appState.cableStatus() === "установлен" ? "ready" : "warn"; pillHeight: 22; anchors.verticalCenter: parent.verticalCenter }
+                                StatusPill { text: appState.cableStatus(); pillState: appState.cableStatus() === "установлен" ? "ready" : (appState.cableStatus() === "нужна перезагрузка" ? "loading" : "warn"); pillHeight: 22; anchors.verticalCenter: parent.verticalCenter }
                             }
 
                             AppButton {
@@ -582,8 +582,26 @@ Item {
                                 text: "Установить VB-CABLE"
                                 iconSource: "icons/folder.svg"
                                 flat: true
-                                visible: appState.cableStatus() !== "установлен"
+                                visible: appState.cableStatus() === "не установлен"
                                 onClicked: appState.installCable()
+                            }
+
+                            Text {
+                                width: parent.width
+                                visible: appState.cableStatus() === "нужна перезагрузка"
+                                text: "Драйвер уже установлен, но Windows ещё не видит устройств: перезагрузи компьютер, потом нажми «Перечитать устройства»."
+                                wrapMode: Text.WordWrap
+                                color: Theme.textMuted
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 11
+                            }
+
+                            AppButton {
+                                width: parent.width
+                                text: "Перечитать устройства"
+                                iconSource: "icons/refresh.svg"
+                                flat: true
+                                onClicked: appState.refreshAudioDevices()
                             }
 
                             Rectangle { width: parent.width; height: 1; color: Theme.border }

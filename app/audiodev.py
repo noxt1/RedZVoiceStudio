@@ -18,13 +18,28 @@ _cache: dict[tuple[str, int], list[int]] = {}
 _lock = threading.Lock()
 
 
+def _native_rate(idx: int) -> int:
+    """Родная частота устройства — на ней же работает и мост."""
+    try:
+        import sounddevice as sd
+        return int(float(sd.query_devices(idx)["default_samplerate"]))
+    except Exception:
+        return 0
+
+
 def _test_input(idx: int, rate: int, seconds: float = 0.35) -> bool:
+    import numpy as np
     import sounddevice as sd
     try:
         with sd.InputStream(samplerate=rate, channels=1, dtype="float32",
                             device=idx, blocksize=1024) as st:
             data, _ = st.read(int(rate * seconds))
-        return len(data) > 0
+        if len(data) == 0:
+            return False
+        # «Чужая» частота открывается без ошибки, но отдаёт ЦИФРОВЫЕ НУЛИ.
+        # Раньше такой вариант считался рабочим, запись шла с него и
+        # выходила тишиной (индикатор микрофона не двигался вообще).
+        return float(np.abs(data).max()) > 1e-7
     except Exception:
         return False
 
@@ -47,8 +62,12 @@ def working_rates(idx: int, kind: str = "input") -> list[int]:
     with _lock:
         if key in _cache:
             return _cache[key]
+    # Сначала родная частота устройства: на ней поток открывается
+    # штатно, без пересэмплирования драйвером.
+    native = _native_rate(idx)
+    order = ([native] if native else []) + [r for r in CANDIDATE_RATES if r != native]
     rates = []
-    for rate in CANDIDATE_RATES:
+    for rate in order:
         ok = _test_input(idx, rate) if kind == "input" else _test_output(idx, rate)
         if ok:
             rates.append(rate)
@@ -89,3 +108,54 @@ def level_probe(idx: int | None, seconds: float = 0.6) -> float:
         return float(np.abs(audio).max()) if audio.size else 0.0
     except Exception:
         return 0.0
+
+
+_EXCLUSIVE_APIS = ("wdm-ks",)
+
+
+def _same_device_name(name: str) -> str:
+    """Имя без хвоста «2- »: WDM-KS зовёт микрофон без него.
+
+    «Микрофон (2- fifine Microphone)» (MME) и «Микрофон (fifine
+    Microphone)» (WDM-KS) — одно и то же устройство.
+    """
+    import re
+    s = " ".join(str(name).lower().split())
+    return re.sub(r"\(\s*\d+\s*-\s*", "(", s)
+
+
+def safe_input(idx: int | None) -> int | None:
+    """Тот же микрофон, но в обычном (разделяемом) host API.
+
+    PortAudio показывает один и тот же микрофон несколько раз — для MME,
+    DirectSound, WASAPI и WDM-KS. WDM-KS работает эксклюзивно: устройство
+    может не открыться (занято системой) или открыться без звука, а имя у
+    него без хвоста «(2- ...)» — по нему такие записи и видно. Если выбрано
+    именно WDM-KS-устройство, подставляем его копию из MME/WASAPI.
+    """
+    if idx is None:
+        return None
+    try:
+        import sounddevice as sd
+        devices = sd.query_devices()
+        apis = sd.query_hostapis()
+        dev = devices[idx]
+        api = str(apis[dev["hostapi"]]["name"]).lower()
+        if not any(bad in api for bad in _EXCLUSIVE_APIS):
+            return idx
+        name = _same_device_name(str(dev["name"]))
+        best = None
+        for i, d in enumerate(devices):
+            if int(d["max_input_channels"]) <= 0:
+                continue
+            if _same_device_name(str(d["name"])) != name:
+                continue
+            twin = str(apis[d["hostapi"]]["name"]).lower()
+            if any(bad in twin for bad in _EXCLUSIVE_APIS):
+                continue
+            score = 0 if "mme" in twin else (1 if "directsound" in twin else 2)
+            if best is None or score < best[0]:
+                best = (score, i)
+        return best[1] if best else idx
+    except Exception:
+        return idx

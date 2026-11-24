@@ -12,7 +12,7 @@ import json
 import os
 import urllib.request
 
-UA = {"User-Agent": "RedZVoiceStudio/1.0"}
+UA = {"User-Agent": "Auraloom/1.0"}
 
 
 def get(url: str, timeout: int = 25):

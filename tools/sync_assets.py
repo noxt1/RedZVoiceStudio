@@ -15,7 +15,7 @@ LINES = os.path.join(ROOT, "lines.json")
 KEYBINDS = os.path.join(ROOT, "keybinds.lua")
 PLAYER = os.path.join(ROOT, "player", "index.html")
 
-KEY_TEMPLATE = "-- Горячие клавиши звуковой панели RedZ.\n" \
+KEY_TEMPLATE = "-- Горячие клавиши звуковой панели Auraloom.\n" \
                "-- Клавиши можно переназначить в настройках FiveM (Settings -> Key Bindings):\n" \
                "--   sbplay1 ... sbplay{count}\n\n" \
                "local binds = {{\n" \

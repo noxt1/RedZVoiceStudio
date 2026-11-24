@@ -15,8 +15,8 @@ import subprocess
 import sys
 import time
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
-ENGINE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio",
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
+ENGINE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom",
                       "engine", "Scripts", "python.exe")
 SCRIPT = os.path.join(WS, "tools", "live_translate.py")
 REF = os.path.join(WS, "reference.wav")

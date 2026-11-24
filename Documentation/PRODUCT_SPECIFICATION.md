@@ -1,7 +1,8 @@
 # PRODUCT_SPECIFICATION — Auraloom
 
-Актуально на 2026-11-16. Источник истины — код и запуск; документ описывает
-только то, что подтверждено.
+Актуально на 2026-11-24 (ребрендинг Auraloom, коммит см. `AI_HANDOFF.md`).
+Базовая сверка — 2026-11-16. Источник истины — код и запуск; документ
+описывает только то, что подтверждено.
 
 ## 1. Назначение
 
@@ -19,7 +20,7 @@
 |---|---|
 | Язык | Python 3.14 (GUI), Python 3.12 (engine venv) |
 | GUI | PySide6 6.12 + QML/Qt Quick (подтверждено импортами и загруженными `Qt6Quick.dll`) |
-| Сборка | PyInstaller onefile → `dist/RedZVoiceStudio.exe` (~316 МБ) |
+| Сборка | PyInstaller onefile → `dist/Auraloom.exe` (~316 МБ) |
 | Точка входа | `app/voice_studio.py`; по умолчанию Qt-интерфейс, `--ui-old` — старый Tk, `--ui-new` — новый Tk |
 | Legacy | Tk-интерфейс сохранён полностью (`app/ui/*`, `app/voice_studio.py`) |
 

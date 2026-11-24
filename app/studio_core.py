@@ -97,24 +97,45 @@ class Recorder:
         self._stream = None
         self.device = None
         self.sr = SR
+        self.blocks = 0
+        self.status_note = ""
 
     def _callback(self, indata, frames, time_info, status):  # noqa: ARG001
+        # РАНЬШЕ блок выбрасывался при любом статусе потока (input
+        # overflow и т.п.). На слабых машинах PortAudio сообщает его почти
+        # на каждом колбэке: буфер оставался пустым, индикатор уровня стоял
+        # на нуле, дубль сохранялся тишиной. Данные нужны в любом случае —
+        # статус только запоминаем для сообщения об ошибке.
         if status:
-            return
+            self.status_note = str(status)
         mono = indata[:, 0] if indata.ndim > 1 else indata
         self.buffer.append(mono.copy())
-        self.level = float(np.abs(mono).max())
+        self.blocks += 1
+        self.level = float(np.abs(mono).max()) if mono.size else 0.0
+
+    def _open(self, sd, device, channels):
+        kwargs = {"device": device} if device is not None else {}
+        return sd.InputStream(samplerate=self.sr, channels=channels,
+                              dtype="float32", callback=self._callback,
+                              blocksize=1024, **kwargs)
 
     def start(self, device=None) -> None:
         import sounddevice as sd
-        from audiodev import best_rate
+        from audiodev import best_rate, safe_input
+        device = safe_input(device)
         self.buffer = []
+        self.blocks = 0
+        self.level = 0.0
+        self.status_note = ""
         self.device = device
         # Частота — по устройству: на «чужих» частотах поток отдаёт тишину
         self.sr = best_rate(device, "input", SR)
-        kwargs = {"device": device} if device is not None else {}
-        self._stream = sd.InputStream(samplerate=self.sr, channels=1, dtype="float32",
-                                      callback=self._callback, blocksize=1024, **kwargs)
+        try:
+            self._stream = self._open(sd, device, 1)
+        except Exception:
+            # Часть драйверов (WDM-KS) не открывает 1 канал из 2 —
+            # пробуем стерео, из него берём первый канал.
+            self._stream = self._open(sd, device, 2)
         self._stream.start()
         self.recording = True
 

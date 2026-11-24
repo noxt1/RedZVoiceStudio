@@ -70,7 +70,7 @@ PEER_RGB = 0x007AC0E8        # BGR: #e8c07a — тёплый жёлтый для
 FONT_NAME = "Segoe UI"
 FONT_SIZE = 26
 
-_DEBUG = os.environ.get("REDZ_OVERLAY_DEBUG") == "1"
+_DEBUG = os.environ.get("AURALOOM_OVERLAY_DEBUG") == "1"
 
 WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, wintypes.HWND, wintypes.UINT,
                              wintypes.WPARAM, wintypes.LPARAM)
@@ -160,7 +160,7 @@ user32.DestroyWindow.argtypes = [wintypes.HWND]
 def log_error(text: str) -> None:
     """Записать ошибку оверлея в файл (рядом с файлом текста)."""
     try:
-        path = os.environ.get("REDZ_OVERLAY_LOG", "")
+        path = os.environ.get("AURALOOM_OVERLAY_LOG", "")
         if not path:
             return
         with open(path, "a", encoding="utf-8") as fh:
@@ -183,7 +183,7 @@ class OverlayApp:
         self.peer_text = ""
         self.until = 0.0
         self.last_raw = None
-        self._class_name = "RedZOverlayWin"
+        self._class_name = "AuraloomOverlayWin"
 
     # ---------- GDI-шрифт и кисть ----------
     def _font(self):
@@ -355,7 +355,7 @@ class OverlayApp:
         ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | \
             WS_EX_NOACTIVATE | WS_EX_TOPMOST
         self.hwnd = user32.CreateWindowExW(
-            ex, self._class_name, "RedZ Overlay", WS_POPUP,
+            ex, self._class_name, "Auraloom Overlay", WS_POPUP,
             self.x, self.y, 420, 120, None, None, instance, None)
         if not self.hwnd:
             log_error(f"CreateWindowExW: ошибка {ctypes.get_last_error()}")
@@ -377,14 +377,14 @@ def main() -> None:
         print("usage: overlay_win.py <файл_с_текстом>")
         return
     text_file = sys.argv[1]
-    os.environ.setdefault("REDZ_OVERLAY_LOG",
+    os.environ.setdefault("AURALOOM_OVERLAY_LOG",
                           os.path.join(os.path.dirname(os.path.abspath(text_file)),
                                        "overlay_err.log"))
     app = OverlayApp(
         text_file,
-        x=int(os.environ.get("REDZ_OVERLAY_X", "60")),
-        y=int(os.environ.get("REDZ_OVERLAY_Y", "60")),
-        hold=float(os.environ.get("REDZ_OVERLAY_HOLD", "7")))
+        x=int(os.environ.get("AURALOOM_OVERLAY_X", "60")),
+        y=int(os.environ.get("AURALOOM_OVERLAY_Y", "60")),
+        hold=float(os.environ.get("AURALOOM_OVERLAY_HOLD", "7")))
     app.run()
 
 

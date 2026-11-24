@@ -14,7 +14,7 @@
 - настройки: `%LOCALAPPDATA%\Auraloom\workspace\ui_settings.json`.
 
 **Перед началом:** закройте старые копии Auraloom (диспетчер задач → `Auraloom`,
-`RedZVoiceStudio`), запустите `dist\RedZVoiceStudio.exe`, дождитесь внизу слева
+`Auraloom`), запустите `dist\Auraloom.exe`, дождитесь внизу слева
 «Движок: готов» (не «Загрузка моделей…»). Окно — 1280×840.
 
 ---

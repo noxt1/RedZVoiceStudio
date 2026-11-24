@@ -16,7 +16,7 @@ import os
 import urllib.request
 import zipfile
 
-UA = {"User-Agent": "RedZVoiceStudio/1.0"}
+UA = {"User-Agent": "Auraloom/1.0"}
 REPOS = [
     "kiritoGM5/VBCABLE_Driver_Pack45",
     "AlekseyMartynov/action-vbcable-win",

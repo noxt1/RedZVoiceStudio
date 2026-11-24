@@ -58,6 +58,10 @@ dist\Auraloom.exe
 1. Вкладка 3 → **«⚡ Настроить под кабель»** (ставит выход = «CABLE Input»,
    включает мост).
 2. В игре/Discord выбери микрофоном **«CABLE Output»**.
+3. В Discord: «Настройки → Голос и видео → Изоляция голоса» — переключи
+   с «Изоляция голоса» на **«Студия»** (или выключи). Иначе Discord режет
+   синтез как шум, и перевода не слышно. Те же шаги — в окне
+   «Discord — что переключить» (ссылка на Главной).
 
 **Измеренная задержка** (реальные записи, RTX 5080): до первого звука
 перевода **349–425 мс** (`tools/bench_swap_latency.py`). Первый запрос после
@@ -285,8 +289,8 @@ powershell -ExecutionPolicy Bypass -File tools\setup_env.ps1
 ## Что внутри
 
 ```
-redz_mx_soundboard/
-├── dist/RedZVoiceStudio.exe   # ← собранное приложение
+Auraloom/                       # корень проекта (папка рабочей копии)
+├── dist/Auraloom.exe           # ← собранное приложение
 ├── app/                        # исходники приложения (GUI, ядро, хоткеи, перевод)
 ├── voices/                     # голоса Piper es-MX (внутрь EXE)
 ├── tools/                      # CLI-инструменты (внутрь EXE + в workspace)
@@ -565,7 +569,7 @@ RTX 5080 16 ГБ, 31 ГБ RAM, 16 ядер:
 | Синтез | чанк **10** вместо 20 | первый звук 188 мс вместо 350 мс |
 
 Поддерживается откат к точной модели: переменная окружения
-`REDZ_ASR_MODEL=mobiuslabsgmbh/faster-whisper-large-v3-turbo`.
+`AURALOOM_ASR_MODEL=mobiuslabsgmbh/faster-whisper-large-v3-turbo`.
 
 ### Как это слышат другие
 
@@ -622,16 +626,16 @@ Discord слышно и тебя по-русски, и перевод по-ис�
 
 | Что | Где |
 |---|---|
-| **Приложение (EXE)** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard\dist\Auraloom.exe` |
-| **Исходники проекта** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard\` |
+| **Приложение (EXE)** | `dist\Auraloom.exe` (от корня проекта) |
+| **Исходники проекта** | корень проекта (папка, в которой лежит `README.md`) |
 | **Рабочая папка** (озвучка, записи, референс) | `%LOCALAPPDATA%\Auraloom\workspace\` |
 | **Движок XTTS** (torch, модели) | `%LOCALAPPDATA%\Auraloom\engine\` |
-| **Архив проекта** | `C:\Users\cyril\Downloads\123\redz_mx_soundboard.zip` |
+| **Архив проекта** | архив, снятый с папки проекта (если нужен) |
 
 ### Автопроверка одной командой
 
 ```powershell
-cd C:\Users\cyril\Downloads\123\redz_mx_soundboard
+cd <папка проекта>
 python tools\selftest.py
 ```
 
@@ -641,7 +645,7 @@ Stereo Mix и пары устройств, живой мост (микрофон
 
 ### Ручной тест (без игры)
 
-1. Запусти `RedZVoiceStudio.exe`.
+1. Запусти `Auraloom.exe`.
 2. Вкладка **«Микрофон»** → **«▶ Включить мост»**.
    Должно появиться: `мост включён: речь ← «Микрофон (2- fifine Microphone)»,
    выход ← «Наушники (Realtek USB Audio)»`.
@@ -774,7 +778,7 @@ python tools\check_quality.py
 python tools\check_rules.py
 ```
 
-Скрипт проверяет, что в репликах нет упоминаний родственников (п.3.2 RedZ),
+Скрипт проверяет, что в репликах нет упоминаний родственников (п.3.2 Auraloom),
 и что мат присутствует. Запускай после любой правки `lines.json`.
 
 ## Базовый вариант без клонирования

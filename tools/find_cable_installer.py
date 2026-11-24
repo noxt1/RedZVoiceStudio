@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-UA = {"User-Agent": "RedZVoiceStudio/1.0"}
+UA = {"User-Agent": "Auraloom/1.0"}
 CHOCO_PKGS = ["voicemeeter", "voicemeeter-potato", "voicemeeter-banana", "vb-cable"]
 REPO_TERMS = ["VB-CABLE installer", "VBCABLE_Driver_Pack45", "virtual audio cable windows",
                "VB-CABLE driver install", "Voicemeeter8Setup"]

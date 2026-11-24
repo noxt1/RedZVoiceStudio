@@ -20,7 +20,7 @@ import time
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 
 
 def main() -> None:

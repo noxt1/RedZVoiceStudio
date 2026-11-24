@@ -1,5 +1,5 @@
 import QtQuick
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Всплывающее уведомление.
 Item {

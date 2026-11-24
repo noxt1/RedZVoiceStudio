@@ -1,4 +1,4 @@
-# Аудит проекта RedZ Voice Studio
+# Аудит проекта Auraloom
 
 Дата: 15.11.2026
 Состояние: рабочая база (Legacy) + незавершённый порт на PySide6/QML
@@ -12,7 +12,7 @@
 | Legacy UI (Tkinter, 6 вкладок) | рабочий | флаг `--ui-old` |
 | Новый Tk-UI (3 раздела) | рабочий | режим по умолчанию |
 | Тесты | 62/62 OK | `python -m unittest discover -s tests` |
-| Сборка EXE | есть | `dist/RedZVoiceStudio.exe` (173 МБ, 14.11 19:33) |
+| Сборка EXE | есть | `dist/Auraloom.exe` (173 МБ, 14.11 19:33) |
 | Движок (Whisper/opus-mt/XTTS) | отдельный процесс | не тронут, не дублируется |
 
 Точки входа:
@@ -39,7 +39,7 @@ python app/voice_studio.py --ui-qt     # Qt/QML (в разработке)
 
 ### 2.2 Qt/QML не попадает в сборку (НЕ ИСПРАВЛЕНО)
 
-`app/redz_voice_studio_qa.spec` не содержит ни `PySide6`, ни `qtapp`, ни
+`app/auraloom_qa.spec` не содержит ни `PySide6`, ни `qtapp`, ни
 QML-ресурсов. Даже рабочий Qt-интерфейс в EXE не соберётся.
 
 ### 2.3 QML-предупреждения (ИСПРАВЛЕНО)
@@ -83,7 +83,7 @@ QML-ресурсов. Даже рабочий Qt-интерфейс в EXE не 
 
 ### 3.2 QML-слой
 
-Компоненты (`qml/RedZ/`): `Theme`, `AppButton`, `AppIconButton`, `AppSwitch`,
+Компоненты (`qml/Auraloom/`): `Theme`, `AppButton`, `AppIconButton`, `AppSwitch`,
 `AppSlider`, `AppCombo`, `AppField`, `AppTab`, `AppTabs`, `LangCombo`,
 `LevelMeter`, `StatusPill`, `Panel`, `WaveformVisualizer`, `StepProgress`,
 `Divider`, `Icon`, `FlatBorder`, `Toast`, `qmldir`. 31 SVG-иконка.
@@ -125,7 +125,7 @@ QML-ресурсов. Даже рабочий Qt-интерфейс в EXE не 
 ## 5. Воспроизведение
 
 ```powershell
-cd C:\Users\cyril\Downloads\123\redz_mx_soundboard
+cd <папка проекта>
 
 # Legacy
 python app/voice_studio.py --ui-old
@@ -166,6 +166,6 @@ app/qtapp/voice_controller.py        голоса
 app/qtapp/models.py                  модели QML
 app/qtapp/qml/main.qml               главное окно
 app/qtapp/qml/pages/LivePage.qml     главная страница
-app/redz_voice_studio_qa.spec        сборка (Qt не добавлен)
-dist/RedZVoiceStudio.exe             готовая сборка (без Qt)
+app/auraloom_qa.spec        сборка (Qt не добавлен)
+dist/Auraloom.exe             готовая сборка (без Qt)
 ```

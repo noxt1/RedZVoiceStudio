@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Главная — по композиции референсов 09/10:
 ///   • герой-баннер с знаком и волнами
@@ -11,6 +11,9 @@ Item {
     id: page
 
     signal navigate(string key)
+
+    // Окно с инструкцией по Discord (открывается ссылкой из карточки).
+    DiscordHelpWindow { id: discordHelp }
 
     // ---- состояние экрана (сохранено для совместимости) ----
     property bool continuous: false
@@ -671,6 +674,61 @@ Item {
                     id: rightCol
                     width: parent.width - 8
                     spacing: 10
+
+                // Discord: что переключить вручную
+                Card {
+                    width: parent.width
+                    height: 112
+                    padding: 12
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 6
+
+                        Row {
+                            width: parent.width
+                            spacing: 8
+
+                            Icon {
+                                source: "icons/plug.svg"
+                                color: Theme.accentBright
+                                size: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: "Discord"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamilyText
+                                font.pixelSize: 13
+                                font.weight: Theme.weightSemiBold
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: "Микрофон — CABLE Output, изоляция голоса — «Студия»."
+                            color: Theme.textMuted
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 10
+                            lineHeight: 1.3
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: "что переключить →"
+                            color: Theme.accentBright
+                            font.family: Theme.fontFamilyText
+                            font.pixelSize: 11
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: discordHelp.openHelp()
+                            }
+                        }
+                    }
+                }
 
                 // мой голос
                 Card {

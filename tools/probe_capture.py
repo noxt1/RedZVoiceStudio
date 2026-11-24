@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 SR = 44100
 
 

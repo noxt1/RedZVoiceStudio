@@ -13,18 +13,18 @@
 
 | Элемент референса | Куда | Данные в приложении |
 |---|---|---|
-| Сайдбар: знак + `Auraloom`, пункты Home/Models/Languages/Settings/Diagnostics/About | `main.qml`, `RedZ/LogoMark.qml` | `window.section`, `appState` |
-| Карточка движка внизу сайдбара: зелёная точка, «Engine: Ready», имя GPU, VRAM, мини-график | `RedZ/EngineBadge.qml` | `appState.engineState`, `appState.gpuName`, `vramUsed/vramTotal` |
-| Герой-баннер: знак, `Auraloom`, подпись, неоновые волны, пилюля «Ready» | `RedZ/HeroBanner.qml` | `brandName`, `brandTagline`, `appState.engineState` |
+| Сайдбар: знак + `Auraloom`, пункты Home/Models/Languages/Settings/Diagnostics/About | `main.qml`, `Auraloom/LogoMark.qml` | `window.section`, `appState` |
+| Карточка движка внизу сайдбара: зелёная точка, «Engine: Ready», имя GPU, VRAM, мини-график | `Auraloom/EngineBadge.qml` | `appState.engineState`, `appState.gpuName`, `vramUsed/vramTotal` |
+| Герой-баннер: знак, `Auraloom`, подпись, неоновые волны, пилюля «Ready» | `Auraloom/HeroBanner.qml` | `brandName`, `brandTagline`, `appState.engineState` |
 | Карточка «Live Translation»: заголовок, режим-Auto, шестерёнка | `pages/HomePage.qml` | `appState.mode`, `liveEngine` |
-| Микрофонная орб со свечением, «Listening… / Говорите…» | `RedZ/MicOrb.qml` | `liveEngine.level`, `captureOn`, `busy` |
-| Волновая дорожка под орб | `RedZ/WaveBars.qml` | `liveEngine.level`, `peerLevel` |
+| Микрофонная орб со свечением, «Listening… / Говорите…» | `Auraloom/MicOrb.qml` | `liveEngine.level`, `captureOn`, `busy` |
+| Волновая дорожка под орб | `Auraloom/WaveBars.qml` | `liveEngine.level`, `peerLevel` |
 | Панель «Translation Direction»: две страны + стрелка-обмен | `HomePage` | `appState.srcLang/targetLang`, `setTargetLang` |
-| Панель «Quality Mode»: Fast / Balanced / Quality / Manual | `RedZ/ModeSegment.qml` | `appState.mode`, `appState.setMode()` |
+| Панель «Quality Mode»: Fast / Balanced / Quality / Manual | `Auraloom/ModeSegment.qml` | `appState.mode`, `appState.setMode()` |
 | Панель «Models Status» / «Active Models»: ASR · MT · TTS + Manage | `HomePage` | `liveEngine.modelsLoaded`, `modelsInfo` |
 | «Recent Activity» / «История»: время + перевод + Clear | `HomePage` | `historyModel` |
 | «Quick Actions»: плитки Manage Models / Languages / Settings / Diagnostics | `HomePage` | `page.navigate(key)` |
-| Нижняя строка: `Auraloom v…`, «Все системы в порядке», наушники | `RedZ/StatusBar.qml` | `brandName`, `appState.engineState`, `appState.bridgeOn` |
+| Нижняя строка: `Auraloom v…`, «Все системы в порядке», наушники | `Auraloom/StatusBar.qml` | `brandName`, `appState.engineState`, `appState.bridgeOn` |
 | Voice Studio: две орбы (микрофон + динамик), стрелки обмена, волны, режим, статистика | `pages/VoicesPage.qml` | `voiceController`, `liveEngine.lastMetrics` |
 | Models & Languages: вкладки ASR/MT/TTS, карточки моделей, статус, quick actions | `pages/ModelsPage.qml` | `liveEngine.catalog`, `models`, `downloads` |
 
@@ -42,15 +42,15 @@
 
 | Файл | Назначение |
 |---|---|
-| `RedZ/LogoMark.qml` | знак «A + волна» (готово) |
-| `RedZ/NeonWave.qml` | фоновые волны (готово) |
-| `RedZ/MicOrb.qml` | орб: кольца, свечение, микрофон, пульсация по уровню |
-| `RedZ/WaveBars.qml` | анимированная волновая дорожка |
-| `RedZ/EngineBadge.qml` | карточка движка в сайдбаре с VRAM-графиком |
-| `RedZ/HeroBanner.qml` | верхний баннер «Auraloom + волны + статус» |
-| `RedZ/ModeSegment.qml` | сегмент Fast/Balanced/Quality/Manual |
-| `RedZ/StatSpark.qml` | мини-график для статистики |
-| `RedZ/StatusBar.qml` | нижняя строка состояния |
+| `Auraloom/LogoMark.qml` | знак «A + волна» (готово) |
+| `Auraloom/NeonWave.qml` | фоновые волны (готово) |
+| `Auraloom/MicOrb.qml` | орб: кольца, свечение, микрофон, пульсация по уровню |
+| `Auraloom/WaveBars.qml` | анимированная волновая дорожка |
+| `Auraloom/EngineBadge.qml` | карточка движка в сайдбаре с VRAM-графиком |
+| `Auraloom/HeroBanner.qml` | верхний баннер «Auraloom + волны + статус» |
+| `Auraloom/ModeSegment.qml` | сегмент Fast/Balanced/Quality/Manual |
+| `Auraloom/StatSpark.qml` | мини-график для статистики |
+| `Auraloom/StatusBar.qml` | нижняя строка состояния |
 
 ## 3. Этапы
 

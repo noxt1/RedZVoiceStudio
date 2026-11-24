@@ -1,11 +1,11 @@
-# Инструкция по ручному тестированию RedZ Voice Studio (историческая, Legacy Tk)
+# Инструкция по ручному тестированию Auraloom Voice Studio (историческая, Legacy Tk)
 
 > Для актуального Qt/QML UI используй `Documentation/MANUAL_RESULTS.md`
 > и `Documentation/HANDOFF_2026-11-18.md`. Ниже — только Legacy `--ui-old`.
 
 Для запуска всех команд открыть PowerShell в папке проекта:
 ```
-cd C:\Users\cyril\Downloads\123\redz_mx_soundboard
+cd <папка проекта>
 ```
 
 ---
@@ -52,7 +52,7 @@ python app/voice_studio.py --ui-qt
 2. Выбрать микрофон.
 3. Нажать **«Записать»**, сказать 2–3 фразы, нажать **«Стоп»**.
 4. Нажать **«Собрать reference»**.
-5. **Ожидаемо:** статус «reference готов (N c)», файл `%LOCALAPPDATA%\RedZVoiceStudio\workspace\reference.wav`.
+5. **Ожидаемо:** статус «reference готов (N c)», файл `%LOCALAPPDATA%\Auraloom\workspace\reference.wav`.
 
 ### 2.2 Тестовые фразы (была ошибка «medium»)
 1. Вкладка **«Фразы»** → кнопка **«Озвучить всё»** (или «Клонировать и озвучить всё»).
@@ -108,7 +108,7 @@ python app/voice_studio.py --ui-qt
 
 **Важно:** модели не входят в EXE. Нужен движок:
 ```
-%LOCALAPPDATA%\RedZVoiceStudio\engine\Scripts\python.exe
+%LOCALAPPDATA%\Auraloom\engine\Scripts\python.exe
 ```
 Если его нет — поставить: `powershell -ExecutionPolicy Bypass -File tools\setup_env.ps1`
 
@@ -132,9 +132,9 @@ python app/voice_studio.py --ui-qt
 
 ## 7. Известные ограничения
 
-- **EXE `dist/RedZVoiceStudio.exe`** собран 14.11, до правок. Для проверки EXE нужна пересборка:
+- **EXE `dist/Auraloom.exe`** собран 14.11, до правок. Для проверки EXE нужна пересборка:
   ```powershell
-  pyinstaller --clean --noconfirm app/redz_voice_studio_qa.spec
+  pyinstaller --clean --noconfirm app/auraloom_qa.spec
   ```
 - **Qt/QML** не включён в `.spec` — в EXE не попадёт.
 - **Тестовые фразы** (`voices/prompts/*.wav`, 18 файлов) — в `voices/`, копируются в workspace при старте.

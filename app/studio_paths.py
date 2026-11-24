@@ -1,7 +1,7 @@
 """Пути, рабочая папка и поиск движка для Auraloom.
 
 Приложение работает и как EXE, и из исходников. Всё состояние лежит в
-%LOCALAPPDATA%\\RedZVoiceStudio\\workspace, чтобы не зависеть от того,
+%LOCALAPPDATA%\\Auraloom\\workspace, чтобы не зависеть от того,
 откуда запущено приложение.
 """
 
@@ -111,7 +111,7 @@ def workspace() -> str:
 
 
 def engine_dir() -> str:
-    """Папка с движком. Сначала ищется рядом с EXE (в RedZVoiceStudio_Data/engine/),
+    """Папка с движком. Сначала ищется рядом с EXE (в Auraloom_Data/engine/),
     затем в %LOCALAPPDATA%."""
     app_dir_path = app_dir()
     engine_next_to_exe = os.path.join(app_dir_path, "engine")
@@ -125,7 +125,7 @@ def engine_python() -> str | None:
     candidates = [
         os.path.join(engine_dir(), "Scripts", "python.exe"),
         os.path.join(engine_dir(), "bin", "python"),
-        os.environ.get("REDZ_ENGINE_PYTHON", ""),
+        os.environ.get("AURALOOM_ENGINE_PYTHON", ""),
     ]
     for c in candidates:
         if c and os.path.exists(c):

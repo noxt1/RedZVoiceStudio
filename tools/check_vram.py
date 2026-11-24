@@ -5,7 +5,7 @@ import os
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-py = r"C:\Users\cyril\AppData\Local\RedZVoiceStudio\engine\Scripts\python.exe"
+py = r"C:\Users\cyril\AppData\Local\Auraloom\engine\Scripts\python.exe"
 if not os.path.exists(py):
     print("движок не найден:", py)
     sys.exit(1)

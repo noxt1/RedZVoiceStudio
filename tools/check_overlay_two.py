@@ -24,7 +24,7 @@ user32 = __import__("ctypes").windll.user32
 
 
 def find_overlay_window() -> int:
-    """Найти окно оверлея по классу RedZOverlayWin (чистый Win32/GDI)."""
+    """Найти окно оверлея по классу AuraloomOverlayWin (чистый Win32/GDI)."""
     import ctypes
     found = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
@@ -33,7 +33,7 @@ def find_overlay_window() -> int:
     def cb(hwnd, lparam):  # noqa: ARG001
         cls = ctypes.create_unicode_buffer(128)
         user32.GetClassNameW(hwnd, cls, 128)
-        if str(cls.value) == "RedZOverlayWin":
+        if str(cls.value) == "AuraloomOverlayWin":
             l, t, r, b = win_rect(hwnd)
             if (r - l) > 100 and (b - t) > 20:
                 found.append(hwnd)

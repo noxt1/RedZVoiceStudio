@@ -13,7 +13,7 @@
 |---|---|---|
 | Компиляция Python | `python -m compileall -q app` | PASS (без ошибок) |
 | Юнит-тесты | `python -m unittest discover -s tests -q` | PASS — 152 теста (вкл. 3 в `test_mt_quality.py`, 4 в `test_bridge_monitor.py`) |
-| QML-линт | `pyside6-qmllint -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/RedZ/*.qml` | PASS — 0 ошибок (только Info/Warning) |
+| QML-линт | `pyside6-qmllint -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/Auraloom/*.qml` | PASS — 0 ошибок (только Info/Warning) |
 | Аудит API QML→Python | обход всех `appState.*`, `liveEngine.*`, `voiceController.*`, `*Model.*` в QML и `hasattr` на живых объектах | PASS — 74 обращения, 0 отсутствующих |
 | Аудит сигналов | AST: сравнение арности `Signal(...)` и `.emit(...)` | PASS — 0 расхождений (было 2, исправлено) |
 | Запуск QML-оболочки | `python app/qtapp/test_launch.py` | PASS — «окно создано и показано, QML OK» |
@@ -50,7 +50,7 @@
 | «Голос»: панель инструментов в 1280 px | скриншот после разбивки на два ряда | PASS — поле имени профиля и «Создать профиль» видны целиком, `shots/voices_1280x840.png` |
 | «История» с записями | `tools/history_shot.py` наполняет модель четырьмя репликами | PASS — карточки, направления (RU→ES / ES→RU), время, действия; `shots/history_filled_1280x840.png`, `shots/history_filled_1920x1080.png` |
 | IT→RU через английский | движковый python: `opus-mt-it-en` + `opus-mt-en-ru`, 3 фразы, beam 4 | PASS — «Non toccare niente, per favore!» → «Ничего не трогай, пожалуйста!»; в одной фразе потерян вопрос «Где ты?» (потеря на pivot) |
-| EXE после ребрендинга | `pyinstaller --clean --noconfirm app/redz_voice_studio.spec`, запуск, скриншот | PASS — `dist/RedZVoiceStudio.exe` 301 МБ, окно `Auraloom`, новый UI рендерится (`shots/exe_launch.png`) |
+| EXE после ребрендинга | `pyinstaller --clean --noconfirm app/auraloom.spec`, запуск, скриншот | PASS — `dist/Auraloom.exe` 301 МБ, окно `Auraloom`, новый UI рендерится (`shots/exe_launch.png`) |
 | Все 7 экранов в двух разрешениях | скриншоты 1280×840 и 1920×1080 для главной, перевода, голоса, моделей, настроек, истории, фраз | PASS — `shots/*_1280x840.png`, `shots/*_1920x1080.png`; пустые состояния истории — ожидаемо |
 | Запуск движка | `state.startEngine()` | PASS — `LOADING` 0.2 с, `READY` 20.4 с |
 | Загрузка моделей (лог) | `live_engine.log` | PASS — ASR+MT 7.1 с, XTTS 10.4 с, RSS 2.1 ГБ |
@@ -142,10 +142,10 @@ fast/quality/balanced, смены языка собеседника es/en/auto, 
 
 | Проверка | Результат |
 |---|---|
-| Сборка `pyinstaller --clean --noconfirm redz_voice_studio.spec` | PASS (≈1,5 мин) |
-| Артефакт | `dist/RedZVoiceStudio.exe`, 316 482 741 байт (301,8 МБ), onefile |
+| Сборка `pyinstaller --clean --noconfirm auraloom.spec` | PASS (≈1,5 мин) |
+| Артефакт | `dist/Auraloom.exe`, 316 482 741 байт (301,8 МБ), onefile |
 | SHA-256 | `b17eaa8c7118970999c210c9331dfa536d906a7058b119aefee92788589c0ba0` |
-| Пересборка 2026-11-19 | `dist/RedZVoiceStudio.exe`, 316 676 903 байт, SHA-256 `6d60f82186620f9c6b26564f188c31c40886e4d1ddc0c2a838926d69bd44768d`; запуск не проверялся — single-instance при открытом приложении владельца |
+| Пересборка 2026-11-19 | `dist/Auraloom.exe`, 316 676 903 байт, SHA-256 `6d60f82186620f9c6b26564f188c31c40886e4d1ddc0c2a838926d69bd44768d`; запуск не проверялся — single-instance при открытом приложении владельца |
 | Запуск EXE | PASS — окно «Auraloom», `Responding: True`, экран «Модели» отрисован |
 | QML внутри бандла | PASS — карточки ASR/MT/TTS, вкладки, статус-бар, боковое меню |
 | Остановка движка из EXE | PASS — «Остановить модели» → «[engine] модели выгружены (RSS=1678 МБ)» |
@@ -171,7 +171,7 @@ fast/quality/balanced, смены языка собеседника es/en/auto, 
 python -m compileall -q app
 python -m unittest discover -s tests -q
 "C:/Users/cyril/AppData/Roaming/Python/Python314/Scripts/pyside6-qmllint.exe" \
-  -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/RedZ/*.qml
+  -I app/qtapp/qml app/qtapp/qml/main.qml app/qtapp/qml/pages/*.qml app/qtapp/qml/Auraloom/*.qml
 python app/qtapp/test_launch.py     # QML грузится и окно создаётся
 python tools/soak_live.py --minutes 6   # нагрузочный прогон движка
 python tools/probe_partial.py           # промежуточное распознавание

@@ -8,7 +8,7 @@
   * сравнение с обычным (не потоковым) inference
 
 Запуск (нужен движок с torch/coqui-tts):
-    "C:\\Users\\cyril\\AppData\\Local\\RedZVoiceStudio\\engine\\Scripts\\python.exe" research\\bench_xtts_stream.py
+    "C:\\Users\\cyril\\AppData\\Local\\Auraloom\\engine\\Scripts\\python.exe" research\\bench_xtts_stream.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 REF = os.path.join(WS, "reference.wav")
 HF = os.path.expanduser(r"~\.cache\huggingface\hub\models--tts-hub--XTTS-v2")
 SNAP = glob.glob(os.path.join(HF, "snapshots", "*"))

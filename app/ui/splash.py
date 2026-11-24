@@ -1,4 +1,4 @@
-"""Экран загрузки RedZ Voice Studio.
+"""Экран загрузки Auraloom Voice Studio.
 
 Показывается на время инициализации: пока строятся страницы, опрашиваются
 устройства и поднимается LiveTab, пользователь видит окно с прогрессом
@@ -24,7 +24,7 @@ from ui.theme import (
 class SplashScreen:
     """Полноэкранная заставка с прогрессом 0–100%."""
 
-    def __init__(self, title: str = "RedZ Voice Studio") -> None:
+    def __init__(self, title: str = "Auraloom Voice Studio") -> None:
         self.root = tk.Tk()
         self.root.title(title)
         self.root.configure(bg=BG)
@@ -39,7 +39,7 @@ class SplashScreen:
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
         # --- логотип ---
-        logo = tk.Label(self.root, text="RedZ", bg=BG, fg=ACCENT,
+        logo = tk.Label(self.root, text="Auraloom", bg=BG, fg=ACCENT,
                         font=("Segoe UI Variable Display", 30, "bold"))
         logo.pack(pady=(38, 0))
 

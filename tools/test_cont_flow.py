@@ -26,7 +26,7 @@ import live_tab as lt  # noqa: E402
 def main() -> None:
     import soundfile as sf
 
-    ws = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio",
+    ws = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom",
                       "workspace")
     samples_dir = os.path.join(ws, "voice_samples")
     files = sorted(f for f in os.listdir(samples_dir) if f.endswith(".wav"))[:2]

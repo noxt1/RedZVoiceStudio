@@ -71,7 +71,7 @@ def split_like_app(samples: list[np.ndarray], silence: float = 0.8,
 
 
 def main() -> None:
-    ws = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio",
+    ws = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom",
                       "workspace")
     samples_dir = os.path.join(ws, "voice_samples")
     files = sorted(f for f in os.listdir(samples_dir) if f.endswith(".wav"))[:4]

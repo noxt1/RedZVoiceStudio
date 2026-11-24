@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 REF = os.path.join(WS, "reference.wav")
 SAMPLES = sorted(glob.glob(os.path.join(WS, "voice_samples", "*.wav")))
 

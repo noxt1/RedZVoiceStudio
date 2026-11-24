@@ -39,7 +39,7 @@ QML_DIR = os.path.join(_HERE, "qml")
 
 
 def _qml_import_paths() -> list[str]:
-    """Каталог с модулем RedZ (qmldir + компоненты)."""
+    """Каталог с модулем Auraloom (qmldir + компоненты)."""
     return [os.path.join(QML_DIR)]
 
 
@@ -63,7 +63,8 @@ def main() -> int:
     # --- контроллеры (один на приложение) ---
     state = AppState()
     live = LiveEngine()
-    voices = VoiceController()
+    # запись дублей идёт с того же микрофона, что выбран в настройках
+    voices = VoiceController(mic_provider=lambda: state.inDevice)
 
     # связываем
     live.attach(state)

@@ -56,7 +56,7 @@ def main() -> None:
     # проверка
     with zipfile.ZipFile(out) as z:
         bad = z.testzip()
-        has_exe = "dist/RedZVoiceStudio.exe" in z.namelist()
+        has_exe = "dist/Auraloom.exe" in z.namelist()
         print("битых записей:", bad or "нет", "| EXE внутри:", has_exe)
 
 

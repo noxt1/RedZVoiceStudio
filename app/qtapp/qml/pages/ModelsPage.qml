@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import RedZ 1.0
+import Auraloom 1.0
 
 /// Модели и языки — по композиции референса «Models & Languages»:
 ///   • шапка с поиском

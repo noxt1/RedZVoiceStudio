@@ -3,7 +3,7 @@
 Индекс CLI-инструментов Auraloom: 150 `.py` и один `setup_env.ps1`.
 Часть папки — не «утилиты разработчика», а **работающий код продукта**: движок
 живого перевода и модули, которые он импортирует. Поэтому папка целиком
-попадает в EXE (см. `app/redz_voice_studio.spec`) и копируется в рабочую папку
+попадает в EXE (см. `app/auraloom.spec`) и копируется в рабочую папку
 (`studio_paths.workspace_tools()`).
 
 ## Каким интерпретатором запускать
@@ -12,7 +12,7 @@
 |---|---|
 | системный `python` (3.14, PySide6, numpy, sounddevice, soundfile) | скриншоты, навигация, устройства, проверка файлов, `selftest.py` |
 | движок `%LOCALAPPDATA%\Auraloom\engine\Scripts\python.exe` (3.12 + torch/transformers/TTS) | `live_translate.py`, `xtts_clone.py`, `synthesize.py`, `voice_*.py`, `quality_sweep.py`, `glossary.py`, `model_*.py`, `download_model.py`, `diagnose_*.py` |
-| собранный `dist/RedZVoiceStudio.exe` | `click_voice_all.py`, `test_hotkey_e2e.py`, `test_live_ui.py` |
+| собранный `dist/Auraloom.exe` | `click_voice_all.py`, `test_hotkey_e2e.py`, `test_live_ui.py` |
 
 ## 1. Рантайм: зовётся из приложения или движка — не перемещать
 
@@ -149,7 +149,7 @@
 | Скрипт | Назначение |
 |---|---|
 | `pack_zip.py` | архив проекта в обход блокировки занятого EXE |
-| `gen_icons.py` | SVG-иконки RedZ 24×24 в едином стиле |
+| `gen_icons.py` | SVG-иконки Auraloom 24×24 в едином стиле |
 | `sync_assets.py`, `sync_player.py` | перегенерировать `keybinds.lua` / `player/index.html` из `lines.json` |
 | `fix_structure.py` | починить структуру `lines.json` и регекс плеера |
 | `check_vault.py`, `link_vault_index.py` | стек памяти в Obsidian: целостность и индекс |
@@ -228,7 +228,7 @@ vb-audio.com (пригодится на чужой машине); `click_install
 
 1. `studio_paths.workspace_tools()` читает `tools/` **без рекурсии** — файлы
    из `archive/` перестанут копироваться в рабочую папку (это и нужно).
-2. `app/redz_voice_studio.spec` обходит папку через `os.walk` **рекурсивно**,
+2. `app/auraloom.spec` обходит папку через `os.walk` **рекурсивно**,
    поэтому `archive` добавлен в фильтр `dirnames` — иначе архив уехал бы в EXE.
 3. Документация ссылается на 20+ имён из `tools/` (`live_translate`,
    `glossary`, `model_registry`, `model_discovery`, `download_model`,

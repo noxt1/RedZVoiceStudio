@@ -28,8 +28,8 @@ sys.path.insert(0, os.path.join(ROOT, "app"))
 
 from live_client import LiveTranslator  # noqa: E402
 
-WS = os.path.join(os.environ["LOCALAPPDATA"], "RedZVoiceStudio", "workspace")
-ENGINE_PY = os.path.join(os.environ["LOCALAPPDATA"], "RedZVoiceStudio",
+WS = os.path.join(os.environ["LOCALAPPDATA"], "Auraloom", "workspace")
+ENGINE_PY = os.path.join(os.environ["LOCALAPPDATA"], "Auraloom",
                          "engine", "Scripts", "python.exe")
 SCRIPT = os.path.join(WS, "tools", "live_translate.py")
 REF = os.path.join(WS, "reference.wav")

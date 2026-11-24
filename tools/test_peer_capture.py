@@ -21,8 +21,8 @@ import time
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
-ENG = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio",
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
+ENG = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom",
                    "engine", "Scripts", "python.exe")
 SCRIPT = os.path.join(WS, "tools", "live_translate.py")
 REF = os.path.join(WS, "reference.wav")

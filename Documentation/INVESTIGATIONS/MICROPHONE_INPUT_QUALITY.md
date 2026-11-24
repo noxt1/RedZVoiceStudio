@@ -304,7 +304,7 @@ git checkout cd24caa -- app/qtapp/live_engine.py tools/live_translate.py
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -q
 
 # 5. Диагностика в живом приложении
-set AURALOOM_AUDIO_DIAG=1 && RedZVoiceStudio.exe
+set AURALOOM_AUDIO_DIAG=1 && Auraloom.exe
 #    → %LOCALAPPDATA%\Auraloom\workspace\logs\audio_diag.log
 ```
 

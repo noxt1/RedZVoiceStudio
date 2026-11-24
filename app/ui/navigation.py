@@ -55,7 +55,7 @@ class Navigation(tk.Frame):
         header.pack(fill="x", padx=SPACE_M, pady=(SPACE_M, SPACE_M))
 
         tk.Label(
-            header, text="RedZ", bg=SIDEBAR_BG, fg=ACCENT,
+            header, text="Auraloom", bg=SIDEBAR_BG, fg=ACCENT,
             font=FONT_APP_TITLE, anchor="w").pack(side="left")
         tk.Label(
             header, text="Voice Studio", bg=SIDEBAR_BG, fg=TEXT_PRIMARY,

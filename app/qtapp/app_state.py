@@ -22,6 +22,7 @@ import branding
 import reports
 import studio_paths as sp
 import studio_core as core
+import audiodev
 import hotkeys as hk
 import cable as cable_mod
 
@@ -1067,6 +1068,11 @@ class AppState(QObject):
     def cableStatus(self) -> str:
         if cable_mod.is_installed():
             return "установлен"
+        # Драйвер уже стоит на диске, но устройств в системе нет: по
+        # инструкции VB-CABLE после установки нужна перезагрузка. Раньше
+        # приложение писало «не установлен» и человек ставил драйвер снова.
+        if cable_mod.driver_files_present():
+            return "нужна перезагрузка"
         return "не установлен"
 
     @Slot(result=bool)
@@ -1074,6 +1080,43 @@ class AppState(QObject):
         ok, msg = cable_mod.download()
         self.statusMessage.emit(msg, "ok" if ok else "err")
         return ok
+
+    def _engineBusy(self) -> bool:
+        """Занят ли звук: прерывать поток нельзя."""
+        try:
+            eng = getattr(self, "_live_engine", None)
+            if eng is not None and eng.busy:
+                return True
+        except Exception:
+            pass
+        try:
+            if self.bridge is not None and self.bridge.status().get("running"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    @Slot()
+    def refreshAudioDevices(self) -> None:
+        """Перечитать звуковые устройства без перезапуска приложения.
+
+        PortAudio запоминает список устройств при старте: кабель,
+        установленный при работающем приложении, до перезапуска не виден.
+        """
+        if self._engineBusy():
+            self.statusMessage.emit(
+                "сначала останови движок и мост — иначе звук оборвётся", "warn")
+            return
+        try:
+            import sounddevice as sd
+            sd._terminate()
+            sd._initialize()
+        except Exception as exc:  # noqa: BLE001
+            self.statusMessage.emit(f"устройства не перечитались: {exc}", "err")
+            return
+        self._load_devices()
+        self.statusMessage.emit(
+            f"устройства перечитаны · кабель: {self.cableStatus()}", "ok")
 
     # ==================================================================
     # ВНУТРЕННЕЕ
@@ -1106,17 +1149,17 @@ class AppState(QObject):
         if mic_idx is not None and any(n == mic_idx for n, _ in inputs):
             name = name_of(mic_idx)
             if not self._looks_like_mapper(name) and not self._is_virtual_input(name):
-                return mic_idx
+                return audiodev.safe_input(mic_idx)
 
         real = [(i, n) for i, n in inputs
                 if not self._looks_like_mapper(n) and not self._is_virtual_input(n)]
         for i, n in real:
             low = n.lower()
             if "микро" in low or "micro" in low or "mic" in low:
-                return i
+                return audiodev.safe_input(i)
         if real:
-            return real[0][0]
-        return inputs[0][0]
+            return audiodev.safe_input(real[0][0])
+        return audiodev.safe_input(inputs[0][0])
 
     def _device_name(self, dev_list, idx):
         for num, name in dev_list:

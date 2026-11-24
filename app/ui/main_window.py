@@ -1,4 +1,4 @@
-"""Главное окно нового интерфейса RedZ Voice Studio по референсу.
+"""Главное окно нового интерфейса Auraloom Voice Studio по референсу.
 
 Боковая навигация слева, главный контент справа.
 Всё подключено к существующему аудиоконвейеру Studio / LiveTab.
@@ -43,7 +43,7 @@ class MainWindow:
     def __init__(self, studio):
         self.studio = studio
         self.root = tk.Tk()
-        self.root.title("RedZ Voice Studio")
+        self.root.title("Auraloom Voice Studio")
         self.root.geometry("1400x900")
         self.root.minsize(1100, 700)
         self.root.configure(bg="#0B1118")

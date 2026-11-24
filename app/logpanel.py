@@ -41,11 +41,11 @@ class LogPanel(tk.Frame):
         self.progress.pack(side="left", padx=(2, 8), pady=(0, 4))
         try:
             style = ttk.Style(self)
-            style.configure("Redz.Horizontal.TProgressbar", troughcolor="#1e2229",
+            style.configure("Auraloom.Horizontal.TProgressbar", troughcolor="#1e2229",
                             background=ACCENT, bordercolor="#1e2229",
                             lightcolor=ACCENT, darkcolor=ACCENT,
                             thickness=12, borderwidth=0)
-            self.progress.configure(style="Redz.Horizontal.TProgressbar")
+            self.progress.configure(style="Auraloom.Horizontal.TProgressbar")
         except tk.TclError:
             pass
         self.progress_lbl = tk.Label(self, text="", bg=BG, fg=DIM,

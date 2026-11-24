@@ -1,4 +1,4 @@
-# Third-party notices — RedZ Voice Studio
+# Third-party notices — Auraloom Voice Studio
 
 Всё, что лежит в папке `voices/`, свободно распространяется: исходные
 код и модели взяты под свободными лицензиями, а готовые образцы

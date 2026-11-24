@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 HF = os.path.expanduser(r"~\.cache\huggingface\hub")
 REF = os.path.join(WS, "reference.wav")
 

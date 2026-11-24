@@ -37,7 +37,7 @@ class ProtoMainWindow:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("RedZ Voice Studio — прототип Liquid Glass")
+        self.root.title("Auraloom Voice Studio — прототип Liquid Glass")
         self.root.geometry("1280x800")
         self.root.minsize(1000, 600)
 
@@ -117,7 +117,7 @@ class ProtoMainWindow:
             header, text="Главная",
             bg=BG, fg=FG, font=FONT_TITLE, anchor="w").pack(side="left")
         tk.Label(
-            header, text="RedZ Voice Studio",
+            header, text="Auraloom Voice Studio",
             bg=BG, fg=DIM, font=FONT_SMALL, anchor="e").pack(side="right")
 
         # Статус-панель

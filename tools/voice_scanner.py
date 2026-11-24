@@ -181,7 +181,7 @@ def run_gui() -> str:
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
 
     root = tk.Tk()
-    root.title("Сканер голоса — RedZ Soundboard")
+    root.title("Сканер голоса — Auraloom Soundboard")
     root.geometry("940x680")
     root.configure(bg="#14161a")
 
@@ -193,7 +193,7 @@ def run_gui() -> str:
         style.theme_use("clam")
     except tk.TclError:
         pass
-    style.configure("Redz.Horizontal.TProgressbar", troughcolor="#1e2229",
+    style.configure("Auraloom.Horizontal.TProgressbar", troughcolor="#1e2229",
                     background="#4a9eff", bordercolor="#1e2229",
                     lightcolor="#4a9eff", darkcolor="#4a9eff",
                     thickness=14, borderwidth=0)
@@ -246,7 +246,7 @@ def run_gui() -> str:
     level_frame.pack(fill="x", padx=20, pady=(8, 4))
     lbl("Уровень:", 10, dim, parent=level_frame).pack(side="left")
     level_bar = ttk.Progressbar(level_frame, maximum=100, length=380,
-                                 style="Redz.Horizontal.TProgressbar")
+                                 style="Auraloom.Horizontal.TProgressbar")
     level_bar.pack(side="left", padx=(8, 0))
     level_label = lbl("", 9, dim, parent=level_frame)
     level_label.pack(side="left", padx=8)

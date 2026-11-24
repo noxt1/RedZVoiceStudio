@@ -292,7 +292,7 @@ class SettingsPage(tk.Frame):
         note = tk.Label(
             inner,
             text="В игре или Discorde выбери микрофоном устройство вывода (CABLE Output / "
-                 "мост RedZ), чтобы слышали и твою речь, и перевод.",
+                 "мост Auraloom), чтобы слышали и твою речь, и перевод.",
             bg=SURFACE_1, fg=TEXT_MUTED, font=FONT_SECONDARY,
             anchor="w", justify="left")
         note.pack(anchor="w", pady=(SPACE_M, 0))

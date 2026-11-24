@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import prosody  # noqa: E402
 
-BASE = r"C:\Users\cyril\AppData\Local\RedZVoiceStudio"
+BASE = r"C:\Users\cyril\AppData\Local\Auraloom"
 ENGINE = os.path.join(BASE, "engine", "Scripts", "python.exe")
 WS = os.path.join(BASE, "workspace")
 REF = os.path.join(WS, "reference.wav")

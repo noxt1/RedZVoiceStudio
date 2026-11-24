@@ -16,10 +16,10 @@ import time
 
 user32 = ctypes.windll.user32
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "dist", "RedZVoiceStudio.exe")
+EXE = os.path.join(ROOT, "dist", "Auraloom.exe")
 
 
-def find_window(needle: str = "RedZ Voice Studio") -> int:
+def find_window(needle: str = "Auraloom Voice Studio") -> int:
     found = []
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 

@@ -21,6 +21,7 @@ import time
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot, Property
 
+import audiodev
 import studio_paths as sp
 import studio_core as core
 import prompt_library as plib
@@ -43,8 +44,11 @@ class VoiceController(QObject):
     levelChanged = Signal(float)
     playingChanged = Signal()
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, mic_provider=None) -> None:
         super().__init__(parent)
+        # откуда брать микрофон: выбор в «Настройках» (см. main.py)
+        self._mic_provider = mic_provider
+        self._mic_name = ""
         self.recorder = core.Recorder()
         self._records: dict[int, str] = {}
         self._index = 0
@@ -60,6 +64,8 @@ class VoiceController(QObject):
         self._dur_cache: dict[str, tuple[float, float]] = {}
         # что играет сейчас (путь) — для кнопки «стоп» в интерфейсе
         self._playing_path = ""
+        self._silent_ticks = 0
+        self._silence_warned = False
 
         # таймер уровня
         from PySide6.QtCore import QTimer
@@ -213,23 +219,86 @@ class VoiceController(QObject):
         else:
             self._start_recording()
 
+    @staticmethod
+    def _device_name(index) -> str:
+        if index is None:
+            return ""
+        try:
+            import sounddevice as sd
+            return str(sd.query_devices(index)["name"])
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _mic_usable(index) -> bool:
+        """У устройства есть входные каналы (индекс мог «съехать»)."""
+        try:
+            import sounddevice as sd
+            return int(sd.query_devices(index).get("max_input_channels", 0)) > 0
+        except Exception:
+            return False
+
+    def _pick_mic(self) -> tuple:
+        """Микрофон для записи: выбранный в настройках, затем
+        запомненный, затем подобранный автоматически.
+
+        Раньше запись шла с устройства по умолчанию Windows, игнорируя
+        выбор в настройках: если по умолчанию стоит виртуальный кабель
+        (CABLE Output — его выбирают для Discord), дубль выходил тишиной.
+        """
+        if callable(self._mic_provider):
+            try:
+                idx = int(self._mic_provider())
+            except Exception:
+                idx = -1
+            if idx >= 0 and self._mic_usable(idx):
+                safe = audiodev.safe_input(idx)
+                return safe, self._device_name(safe)
+        idx, name = core.recalled_mic()
+        if idx is not None and self._mic_usable(idx):
+            safe = audiodev.safe_input(idx)
+            return safe, self._device_name(safe)
+        idx, name = core.pick_input_device()
+        if idx is not None:
+            safe = audiodev.safe_input(idx)
+            return safe, self._device_name(safe) or name
+        return idx, name
+
     def _start_recording(self) -> None:
         if self._recording:
             return
+        device, name = self._pick_mic()
         try:
-            self.recorder.start()
+            self.recorder.start(device)
         except Exception as exc:
-            self._error = f"микрофон не открылся: {exc}"
-            self.statusMessage.emit(self._error, "err")
-            return
+            if device is None:
+                self._error = f"микрофон не открылся: {exc}"
+                self.statusMessage.emit(self._error, "err")
+                return
+            # выбранный микрофон отвалился — пробуем системный
+            try:
+                self.recorder.start(None)
+                device, name = None, ""
+            except Exception as exc2:
+                self._error = f"микрофон не открылся: {exc2}"
+                self.statusMessage.emit(self._error, "err")
+                return
+        self._mic_name = name or self._device_name(device)
+        if device is not None:
+            core.remember_mic(device, self._mic_name)
         self._recording = True
         self._rec_seconds = 0.0
         self._take_ok = False
         self._error = ""
+        self._silent_ticks = 0
+        self._silence_warned = False
         self._level_timer.start()
         self._rec_timer.start()
         self.recordingChanged.emit(True)
         self.takeChanged.emit()
+        self.statusMessage.emit(
+            f"пишу с «{self._mic_name}»" if self._mic_name
+            else "пишу с микрофона Windows по умолчанию", "ok")
 
     def _stop_recording(self) -> None:
         if not self._recording:
@@ -242,6 +311,12 @@ class VoiceController(QObject):
 
         if audio.size == 0:
             self._error = "пустая запись"
+            note = str(getattr(self.recorder, "status_note", "") or "")
+            if note:
+                self._error += f" (поток: {note})"
+            if self._mic_name:
+                self._error += f" — микрофон «{self._mic_name}»"
+            self.statusMessage.emit(self._error, "err")
             self.takeChanged.emit()
             return
 
@@ -251,6 +326,32 @@ class VoiceController(QObject):
             self.takeChanged.emit()
             return
 
+        # обрезать тишину по краям — в reference идёт уже обрезанный дубль
+        audio = core.trim_by_energy(audio, int(self.recorder.sr or core.SR))
+        dur = len(audio) / float(self.recorder.sr or core.SR)
+        if audio.size == 0:
+            self._error = "пустая запись"
+            note = str(getattr(self.recorder, "status_note", "") or "")
+            if note:
+                self._error += f" (поток: {note})"
+            if self._mic_name:
+                self._error += f" — микрофон «{self._mic_name}»"
+            self.statusMessage.emit(self._error, "err")
+            self.takeChanged.emit()
+            return
+
+        # та же проверка, что в старой (Tk) версии: тишина и «слишком
+        # коротко» дублем не считаются — иначе в reference попадает тишина
+        rep = core.quality_report(audio, int(self.recorder.sr or core.SR))
+        if not rep["ok"]:
+            self._take_ok = False
+            self._error = f"переделай: {rep['reason']}"
+            if self._mic_name:
+                self._error += f" (микрофон «{self._mic_name}»)"
+            self.takeChanged.emit()
+            self.statusMessage.emit(self._error, "warn")
+            return
+
         # сохранить дубль
         path = self._take_path(self._index)
         try:
@@ -258,6 +359,7 @@ class VoiceController(QObject):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             sf.write(path, audio, int(self.recorder.sr or core.SR))
         except Exception as exc:
+            self._take_ok = False
             self._error = f"не сохранилось: {exc}"
             self.takeChanged.emit()
             return
@@ -265,13 +367,31 @@ class VoiceController(QObject):
         self._records[self._index] = path
         self._take_ok = True
         self._take_duration = dur
+        self._error = ""
         self.takeChanged.emit()
         self.progressChanged.emit()
         self.samplesChanged.emit()
-        self.statusMessage.emit("ок", "ok")
+        self.statusMessage.emit(f"записано {rep['dur']:.1f} c — ок", "ok")
+        # как в старой версии: удачный дубль — и сразу следующая подсказка
+        self.nextPrompt()
 
     def _tick_level(self) -> None:
-        self.levelChanged.emit(float(getattr(self.recorder, "level", 0.0)))
+        level = float(getattr(self.recorder, "level", 0.0) or 0.0)
+        self.levelChanged.emit(level)
+        if not self._recording or self._silence_warned:
+            return
+        if level > 0.004:
+            self._silent_ticks = 0
+            return
+        # ~1.5 c тишины после старта: поток открылся, но сигнала нет.
+        self._silent_ticks += 1
+        if self._silent_ticks >= 19:
+            self._silence_warned = True
+            name = self._mic_name or "микрофон Windows по умолчанию"
+            self.statusMessage.emit(
+                f"«{name}» открылся, но сигнала нет: проверь доступ к "
+                f"микрофону (Параметры → Конфиденциальность → Микрофон) "
+                f"и что выбран сам микрофон, а не CABLE Output", "warn")
 
     def _tick_rec(self) -> None:
         self._rec_seconds += 1.0

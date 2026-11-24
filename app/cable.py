@@ -24,7 +24,7 @@ import tempfile
 import urllib.request
 import zipfile
 
-APP_NAME = "RedZVoiceStudio"
+APP_NAME = "Auraloom"
 UA = {"User-Agent": f"{APP_NAME}/1.0"}
 
 # Зеркала полного пакета VB-CABLE Driver Pack 45 (официальный установщик).
@@ -123,6 +123,28 @@ def _extract(zip_file: str) -> None:
 def is_installed() -> bool:
     """Есть ли в системе устройства кабеля."""
     return bool(cable_devices())
+
+
+def driver_files_present() -> bool:
+    """Драйвер установлен, но устройств ещё нет (нужна перезагрузка).
+
+    VB-CABLE ставит файлы в C:\\Program Files\\VB\\CABLE и драйвер в
+    System32\\drivers; по официальной инструкции после установки нужна
+    перезагрузка. Поэтому «устройств нет» не значит «не установлен».
+    """
+    for env in ("ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(env)
+        if base and os.path.isdir(os.path.join(base, "VB", "CABLE")):
+            return True
+    windir = os.environ.get("SystemRoot") or "C:\\Windows"
+    try:
+        for fn in os.listdir(os.path.join(windir, "System32", "drivers")):
+            low = fn.lower()
+            if low.startswith("vbcable") and low.endswith(".sys"):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def cable_devices() -> dict:

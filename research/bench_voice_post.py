@@ -24,7 +24,7 @@ import prosody  # noqa: E402
 import voice_post  # noqa: E402
 import voice_tone  # noqa: E402
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 REF = os.path.join(WS, "reference.wav")
 SR = 24000
 

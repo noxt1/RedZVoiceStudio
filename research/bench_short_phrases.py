@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import prosody  # noqa: E402
 
-WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "RedZVoiceStudio", "workspace")
+WS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Auraloom", "workspace")
 REF = os.path.join(WS, "reference.wav")
 SR = 24000
 

@@ -4,7 +4,7 @@ snapshot_download не тянет LFS-большие файлы. Качаем к
 явно через hf_hub_download — так LFS-указатели заменяются данными.
 
 Запуск движком:
-    %LOCALAPPDATA%\\RedZVoiceStudio\\engine\\Scripts\\python.exe tools/fetch_xtts.py
+    %LOCALAPPDATA%\\Auraloom\\engine\\Scripts\\python.exe tools/fetch_xtts.py
 """
 
 from __future__ import annotations

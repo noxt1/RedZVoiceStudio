@@ -18,9 +18,9 @@ from ui.theme import (
 
 def _patch_canvas() -> None:
     """Добавить create_round_rect к tk.Canvas (если ещё не добавлен)."""
-    if hasattr(tk.Canvas, "_redz_round_rect_patched"):
+    if hasattr(tk.Canvas, "_auraloom_round_rect_patched"):
         return
-    tk.Canvas._redz_round_rect_patched = True
+    tk.Canvas._auraloom_round_rect_patched = True
 
     def _create_round_rect(self, x1, y1, x2, y2, r, **kwargs):
         points = [

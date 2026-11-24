@@ -1,4 +1,4 @@
-"""Проверка целостности стека памяти RedZ в Obsidian.
+"""Проверка целостности стека памяти Auraloom в Obsidian.
 
     python tools\\check_vault.py
 """
@@ -58,7 +58,7 @@ def main() -> None:
 
     print("\n=== индекс памяти ===")
     idx = io.open(INDEX, encoding="utf-8").read()
-    print("  RedZ в 00-Индекс:", "да" if "RedZ-Voice-Studio" in idx else "НЕТ")
+    print("  Auraloom в 00-Индекс:", "да" if "RedZ-Voice-Studio" in idx else "НЕТ")
 
     if missing:
         raise SystemExit(1)
